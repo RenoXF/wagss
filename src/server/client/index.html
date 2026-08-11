@@ -692,6 +692,7 @@
 
     <script>
       const API = '';
+      window.WAGSS_QR_SECONDS = __WAGSS_QR_SECONDS__;
       let me = null;
       let currentJid = null;
       let chats = [];
@@ -1090,7 +1091,9 @@
         $('qrImg').classList.add('hidden');
         $('pairCode').classList.add('hidden');
         $('linkStatus').textContent =
-          'Pilih metode pairing. Jika layar kosong dalam 1 menit, proses berhenti otomatis.';
+          'Pilih metode pairing. Jika tidak di-scan dalam ' +
+          (window.WAGSS_QR_SECONDS || 300) +
+          ' detik, proses berhenti otomatis.';
       }
 
       async function refreshLinkState() {
@@ -1135,7 +1138,9 @@
                 'Scan QR atau masukkan kode pairing via WhatsApp.';
             } else if (d.qrCode) {
               $('linkStatus').textContent =
-                'Scan QR dengan WhatsApp. Habis 1 menit tanpa scan = berhenti.';
+                'Scan QR dengan WhatsApp. Habis ' +
+                (window.WAGSS_QR_SECONDS || 300) +
+                ' detik tanpa scan = berhenti.';
             } else if (d.pairingCode) {
               $('linkStatus').textContent =
                 'Masukkan kode pairing di WhatsApp.';

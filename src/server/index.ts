@@ -1,5 +1,5 @@
 import { authUser } from '@/auth/middleware';
-import { HOSTNAME, PORT } from '@/config';
+import { HOSTNAME, PORT, QR_TIMEOUT_MS } from '@/config';
 import { logger } from '@/logger';
 import { SessionHolder } from '@/whatsapp';
 import { cors } from '@elysiajs/cors';
@@ -44,7 +44,10 @@ const app = new Elysia()
     '/',
     ({ set }) => {
       set.headers['content-type'] = 'text/html';
-      return indexClient;
+      return (indexClient as unknown as string).replace(
+        '__WAGSS_QR_SECONDS__',
+        String(Math.round(QR_TIMEOUT_MS / 1000)),
+      );
     },
     { detail: { hide: true } },
   )
