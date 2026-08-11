@@ -340,6 +340,10 @@
         gap: 4px;
         margin-top: 2px;
       }
+      .msg .via {
+        font-size: 11px;
+        color: #8696a0;
+      }
       .msg .time {
         font-size: 11px;
         color: #8696a0;
@@ -1322,6 +1326,7 @@
           m.readAt = row.read_at;
           m.deleted = !!row.deleted;
           m.editedAt = row.edited_at || null;
+          m.device = row.device || null;
           messages.push(m);
         }
         messages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
@@ -1377,6 +1382,8 @@
                   : '✓') +
               '</span>';
           }
+          if (m.device && m.device !== 'unknown')
+            html += '<span class="via">via ' + m.device + '</span>';
           html += '</div>';
           div.innerHTML = html;
           div.onclick = () => selectForReply(m);

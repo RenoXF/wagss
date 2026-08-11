@@ -28,6 +28,7 @@ export type Row = {
   media_path: string | null;
   media_type: string | null;
   media_mime_type: string | null;
+  device: string | null;
 };
 
 /** Extract a normalized text payload from a Baileys proto message. */
@@ -44,14 +45,14 @@ export function extractText(msg: any): string {
   return '';
 }
 
-/** Detect sender device from Baileys message id patterns. */
+/** Detect sender device from Baileys message id patterns (official getDevice). */
 export function detectDevice(id: string): string {
-  if (!id) return 'Unknown';
-  if (/^3A.{18}$/.test(id)) return 'iOS';
-  if (/^3E.{20}$/.test(id)) return 'Web';
-  if (/^(.{21}|.{32})$/.test(id)) return 'Android';
-  if (/^3B/.test(id)) return 'Android';
-  return 'Unknown';
+  if (!id) return 'unknown';
+  if (/^3A.{18}$/.test(id)) return 'ios';
+  if (/^3E.{20}$/.test(id)) return 'web';
+  if (/^(.{21}|.{32})$/.test(id)) return 'android';
+  if (/^(3F|.{18}$)/.test(id)) return 'desktop';
+  return 'unknown';
 }
 
 export type MediaMeta = {

@@ -66,11 +66,15 @@ check('media type image', mediaMeta.media_type === 'image');
 check('media mime', mediaMeta.media_mime_type === 'image/jpeg');
 check('media size', mediaMeta.media_size === 12345);
 check('view_once', mediaMeta.view_once === true);
-check(
-  'device iOS pattern',
-  detectDevice('3AB0DEE4FAAAAAAAAA'.padEnd(26, 'A')) === 'iOS' ||
-    detectDevice('x') !== '',
-);
+
+const dev = (id: string) => detectDevice(id);
+check('device ios', dev('3A' + 'A'.repeat(18)) === 'ios');
+check('device web', dev('3E' + 'A'.repeat(20)) === 'web');
+check('device android-21', dev('A'.repeat(21)) === 'android');
+check('device android-32', dev('A'.repeat(32)) === 'android');
+check('device desktop-3f', dev('3F' + 'A'.repeat(5)) === 'desktop');
+check('device desktop-18', dev('A'.repeat(18)) === 'desktop');
+check('device unknown', dev('') === 'unknown');
 
 // reactions
 const rid = `chat1-${Date.now()}`;
