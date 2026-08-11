@@ -353,8 +353,15 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           for (const u of updates) {
             const status = u.update.status;
             if (status && u.key?.remoteJid) {
+              // WebMessageInfo.Status: 2 SERVER_ACK(sent), 3 DELIVERY_ACK, 4 READ, 5 PLAYED
               const label =
-                status === 2 ? 'read' : status === 1 ? 'delivered' : 'sent';
+                status === 4
+                  ? 'read'
+                  : status === 3
+                    ? 'delivered'
+                    : status === 5
+                      ? 'played'
+                      : 'sent';
               saveStatus(u as never).catch(() => {});
               WhatsAppSession.emitToSse(
                 JSON.stringify({

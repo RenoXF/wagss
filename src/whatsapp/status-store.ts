@@ -37,12 +37,17 @@ export async function saveStatus(e: {
 
   let status: string | null = null;
   if (e.update && typeof e.update.status === 'number') {
+    // WebMessageInfo.Status: 2 SERVER_ACK(sent), 3 DELIVERY_ACK, 4 READ, 5 PLAYED
     status =
-      e.update.status === 3
+      e.update.status === 4
         ? 'read'
-        : e.update.status === 2
+        : e.update.status === 3
           ? 'delivered'
-          : 'sent';
+          : e.update.status === 2
+            ? 'sent'
+            : e.update.status === 5
+              ? 'played'
+              : 'sent';
   } else if (e.receipt?.type) {
     status = e.receipt.type === 'delivery' ? 'delivered' : e.receipt.type;
   }

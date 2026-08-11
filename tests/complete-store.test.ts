@@ -98,11 +98,11 @@ check('reaction removed on null text', after.length === 0);
 const sid = `st-${Date.now()}`;
 await saveStatus({
   key: { id: sid, remoteJid: 'c2@s.whatsapp.net' },
-  update: { status: 1 },
+  update: { status: 2 },
 } as never);
 await saveStatus({
   key: { id: sid, remoteJid: 'c2@s.whatsapp.net' },
-  update: { status: 3 },
+  update: { status: 4 },
 } as never);
 const statuses = await listMessageStatus('c2@s.whatsapp.net', sid);
 check(
