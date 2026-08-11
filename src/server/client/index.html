@@ -1,0 +1,1579 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>WAGSS - WhatsApp Gateway</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #111b21;
+        color: #e9edef;
+        height: 100vh;
+        overflow: hidden;
+      }
+      button {
+        cursor: pointer;
+        font: inherit;
+      }
+      input,
+      select {
+        font: inherit;
+      }
+      .hidden {
+        display: none !important;
+      }
+
+      #loginView {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+      .login-card {
+        background: #202c33;
+        padding: 32px;
+        border-radius: 12px;
+        width: 340px;
+      }
+      .login-card h1 {
+        font-size: 20px;
+        margin-bottom: 20px;
+        text-align: center;
+      }
+      .login-card label {
+        display: block;
+        font-size: 13px;
+        margin: 10px 0 4px;
+        color: #8696a0;
+      }
+      .login-card input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #2f3b43;
+        border-radius: 8px;
+        background: #2a3942;
+        color: #e9edef;
+        outline: none;
+      }
+      .login-card input:focus {
+        border-color: #00a884;
+      }
+      .login-card button {
+        width: 100%;
+        margin-top: 16px;
+        padding: 11px;
+        border: none;
+        border-radius: 8px;
+        background: #00a884;
+        color: #fff;
+        font-weight: 600;
+      }
+      .login-card .err {
+        color: #fc6464;
+        font-size: 13px;
+        margin-top: 8px;
+        min-height: 16px;
+      }
+
+      .app {
+        display: flex;
+        height: 100vh;
+      }
+      .sidebar {
+        width: 340px;
+        min-width: 340px;
+        background: #111b21;
+        border-right: 1px solid #2f3b43;
+        display: flex;
+        flex-direction: column;
+      }
+      .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: #202c33;
+      }
+      .brand {
+        font-weight: 700;
+        font-size: 17px;
+        color: #00a884;
+      }
+      .sidebar-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .sidebar-actions button {
+        background: none;
+        border: none;
+        color: #aebac1;
+        font-size: 13px;
+        padding: 4px 8px;
+        border-radius: 6px;
+      }
+      .sidebar-actions button:hover {
+        background: #2a3942;
+        color: #fff;
+      }
+      .user-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: #111b21;
+        border-bottom: 1px solid #202c33;
+      }
+      .user-chip b {
+        font-size: 14px;
+      }
+      .user-chip .role {
+        font-size: 12px;
+        color: #8696a0;
+      }
+      .search-wrap {
+        padding: 8px 12px;
+      }
+      .search-box {
+        width: 100%;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 8px;
+        background: #202c33;
+        color: #e9edef;
+        outline: none;
+      }
+      .chat-list {
+        flex: 1;
+        overflow-y: auto;
+      }
+      .chat-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        cursor: pointer;
+        border-bottom: 1px solid #111b21;
+      }
+      .chat-item:hover,
+      .chat-item.active {
+        background: #202c33;
+      }
+      .chat-item .ava {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: #00a884;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        color: #fff;
+        flex-shrink: 0;
+      }
+      .chat-item .meta {
+        flex: 1;
+        min-width: 0;
+      }
+      .chat-item .name {
+        font-size: 15px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .chat-item .last {
+        font-size: 13px;
+        color: #8696a0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .chat-item .right {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+      .chat-item .time {
+        font-size: 11px;
+        color: #8696a0;
+      }
+      .chat-item .badge {
+        background: #00a884;
+        color: #fff;
+        font-size: 11px;
+        border-radius: 12px;
+        padding: 1px 7px;
+        font-weight: 700;
+      }
+
+      .main-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background: #0b141a;
+      }
+      .empty-state {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        color: #8696a0;
+        text-align: center;
+        padding: 24px;
+      }
+      .empty-state h2 {
+        color: #e9edef;
+      }
+      .empty-state img.qr {
+        width: 230px;
+        height: 230px;
+        background: #fff;
+        padding: 10px;
+        border-radius: 8px;
+        image-rendering: pixelated;
+      }
+      .empty-state .pair-code {
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 3px;
+        color: #fff;
+      }
+      .empty-state input {
+        padding: 10px 12px;
+        border: none;
+        border-radius: 8px;
+        background: #202c33;
+        color: #e9edef;
+        outline: none;
+        width: 260px;
+      }
+      .empty-state button {
+        background: #00a884;
+        border: none;
+        color: #fff;
+        padding: 11px 28px;
+        border-radius: 8px;
+        font-weight: 600;
+      }
+      .status-line {
+        font-size: 14px;
+      }
+
+      .chat-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        background: #202c33;
+      }
+      .chat-header .ava {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: #00a884;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        color: #fff;
+      }
+      .chat-header .info {
+        flex: 1;
+        min-width: 0;
+      }
+      .chat-header .name {
+        font-weight: 600;
+        font-size: 16px;
+      }
+      .chat-header .sub {
+        font-size: 13px;
+        color: #8696a0;
+      }
+      .messages-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .msg {
+        max-width: 65%;
+        padding: 7px 10px;
+        border-radius: 8px;
+        font-size: 14.5px;
+        line-height: 1.35;
+        position: relative;
+        margin: 1px 0;
+      }
+      .msg.in {
+        background: #202c33;
+        align-self: flex-start;
+      }
+      .msg.out {
+        background: #005c4b;
+        align-self: flex-end;
+      }
+      .msg .sender {
+        font-size: 12px;
+        font-weight: 700;
+        color: #53bdeb;
+        margin-bottom: 2px;
+      }
+      .msg .meta-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        margin-top: 2px;
+      }
+      .msg .time {
+        font-size: 11px;
+        color: #8696a0;
+      }
+      .msg .tick {
+        font-size: 11px;
+        color: #53bdeb;
+      }
+      .msg .reply-info {
+        font-size: 11px;
+        color: #8696a0;
+        border-left: 3px solid #00a884;
+        padding-left: 6px;
+        margin-bottom: 4px;
+        cursor: pointer;
+      }
+      .attrib {
+        display: inline-block;
+        color: #00a884;
+        font-weight: 600;
+      }
+      .react-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      .react {
+        background: #2a3942;
+        color: #fff;
+        border-radius: 12px;
+        padding: 1px 8px;
+        font-size: 13px;
+      }
+      .media {
+        margin-top: 4px;
+      }
+      .media-blur {
+        margin-top: 4px;
+      }
+      .media-blur .blur {
+        filter: blur(8px);
+      }
+      .media-ph {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #202c33;
+        color: #8696a0;
+      }
+      .media-doc {
+        margin-top: 4px;
+      }
+      .typing-banner {
+        font-size: 13px;
+        color: #53bdeb;
+        font-style: italic;
+        padding: 4px 16px;
+        background: #111b21;
+        display: none;
+      }
+      .reply-preview {
+        display: none;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        background: #202c33;
+        border-top: 1px solid #2f3b43;
+      }
+      .reply-preview .rp-box {
+        flex: 1;
+        border-left: 3px solid #00a884;
+        padding-left: 8px;
+        font-size: 13px;
+        color: #8696a0;
+      }
+      .reply-preview .rp-name {
+        color: #53bdeb;
+        font-weight: 600;
+      }
+      .reply-preview button {
+        background: none;
+        border: none;
+        color: #aebac1;
+        font-size: 16px;
+      }
+      .input-area {
+        display: flex;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #202c33;
+      }
+      .input-area input {
+        flex: 1;
+        padding: 11px 14px;
+        border: none;
+        border-radius: 8px;
+        background: #2a3942;
+        color: #e9edef;
+        outline: none;
+      }
+      .input-area button {
+        background: #00a884;
+        border: none;
+        border-radius: 8px;
+        color: #fff;
+        width: 46px;
+        font-weight: 700;
+      }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+      }
+      .modal {
+        background: #202c33;
+        border-radius: 12px;
+        padding: 24px;
+        width: 420px;
+        max-width: 92vw;
+        max-height: 85vh;
+        overflow-y: auto;
+      }
+      .modal h3 {
+        margin-bottom: 16px;
+      }
+      .modal .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #2f3b43;
+      }
+      .modal .row .u-name {
+        font-weight: 600;
+      }
+      .modal .row .u-sub {
+        font-size: 12px;
+        color: #8696a0;
+      }
+      .modal label {
+        display: block;
+        font-size: 13px;
+        margin-top: 10px;
+        color: #8696a0;
+      }
+      .modal input {
+        width: 100%;
+        padding: 9px 11px;
+        border: 1px solid #2f3b43;
+        border-radius: 8px;
+        background: #2a3942;
+        color: #e9edef;
+        outline: none;
+      }
+      .modal .btn-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .modal .btn {
+        flex: 1;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+      }
+      .modal .btn-primary {
+        background: #00a884;
+        color: #fff;
+      }
+      .modal .btn-danger {
+        background: #c42b1c;
+        color: #fff;
+      }
+      .modal .btn-ghost {
+        background: #2a3942;
+        color: #e9edef;
+      }
+      .modal .err {
+        color: #fc6464;
+        font-size: 13px;
+        margin-top: 8px;
+        min-height: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loginView">
+      <div class="login-card">
+        <h1>WAGSS Login</h1>
+        <form id="loginForm">
+          <label>Username</label>
+          <input id="loginUser" autocomplete="username" required />
+          <label>Password</label>
+          <input
+            id="loginPass"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <button type="submit">Masuk</button>
+          <div class="err" id="loginErr"></div>
+        </form>
+      </div>
+    </div>
+
+    <div id="appView" class="app hidden">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <span class="brand">WAGSS</span>
+          <div class="sidebar-actions">
+            <button id="btnUsers" onclick="openUsers()">Pengguna</button>
+            <button id="btnProfile" onclick="logout()">Logout</button>
+          </div>
+        </div>
+        <div class="user-chip">
+          <b id="chipName"></b>
+          <span class="role" id="chipUser"></span>
+        </div>
+        <div class="user-chip">
+          <span id="baileysStatus" style="font-size: 12px">Baileys: —</span>
+          <div class="sidebar-actions" style="margin-left: auto">
+            <button id="btnBaileys" onclick="toggleBaileys()">Start</button>
+            <button id="btnStop" onclick="confirmStop()" style="color: #fc6464">
+              Stop
+            </button>
+          </div>
+        </div>
+        <div class="search-wrap">
+          <input
+            class="search-box"
+            id="searchInput"
+            placeholder="Cari chat..."
+            oninput="renderChats()"
+          />
+        </div>
+        <div class="chat-list" id="chatList"></div>
+      </aside>
+
+      <main class="main-panel">
+        <div id="linkView" class="empty-state">
+          <h2 id="linkTitle">Hubungkan akun WhatsApp</h2>
+          <div
+            id="linkBody"
+            style="
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              gap: 16px;
+            "
+          >
+            <img id="qrImg" class="qr hidden" />
+            <div id="pairCode" class="pair-code hidden"></div>
+            <div class="status-line" id="linkStatus">Menunggu koneksi...</div>
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                width: 100%;
+              "
+            >
+              <button id="btnPairQr" onclick="startSession()">
+                Pairing via QR Code
+              </button>
+              <div style="display: flex; gap: 8px; width: 100%">
+                <input
+                  id="phoneInput"
+                  placeholder="Nomor HP"
+                  style="flex: 1"
+                  title="Diisi untuk pairing via nomor"
+                />
+                <button id="btnPairNum" onclick="startSession(true)">
+                  Pairing via Number
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="chatView"
+          class="hidden"
+          style="flex: 1; display: flex; flex-direction: column"
+        >
+          <div class="chat-header">
+            <div class="ava" id="chatAvatar">?</div>
+            <div class="info">
+              <div class="name" id="chatName">Loading...</div>
+              <div class="sub" id="chatSub">offline</div>
+            </div>
+          </div>
+          <div class="typing-banner" id="typingBanner"></div>
+          <div class="messages-area" id="messagesArea"></div>
+          <div class="reply-preview" id="replyPreview">
+            <div class="rp-box">
+              <div class="rp-name" id="rpName"></div>
+              <span id="rpText"></span>
+            </div>
+            <button onclick="cancelReply()">×</button>
+          </div>
+          <div class="input-area">
+            <input
+              id="msgInput"
+              placeholder="Ketik pesan"
+              onkeydown="onInputKey(event)"
+              oninput="onLocalTyping()"
+            />
+            <button onclick="sendMsg()">Kirim</button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div
+      id="usersModal"
+      class="modal-overlay hidden"
+      onclick="if (event.target === this) closeUsers();"
+    >
+      <div class="modal">
+        <h3>Kelola Pengguna</h3>
+        <div id="usersList"></div>
+        <label>Username baru</label>
+        <input id="nuUser" placeholder="username" />
+        <label>Nama tampilan (tampil di balasan)</label>
+        <input id="nuName" placeholder="Contoh: reno" />
+        <label>Password</label>
+        <input
+          id="nuPass"
+          type="password"
+          placeholder="password minimum 3 karakter"
+        />
+        <div class="err" id="usersErr"></div>
+        <div class="btn-row">
+          <button class="btn btn-ghost" onclick="closeUsers()">Tutup</button>
+          <button class="btn btn-primary" onclick="createUser()">Tambah</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const API = '';
+      let me = null;
+      let currentJid = null;
+      let chats = [];
+      let messages = [];
+      let chatContacts = {};
+      let es = null;
+      let msgOffset = 0;
+      let replyKey = null;
+      let typingTimeout = null;
+
+      const $ = (id) => document.getElementById(id);
+      const jidName = (jid) => {
+        const c = chatContacts[jid];
+        if (c?.name) return c.name;
+        if (jid.includes('@g.us'))
+          return 'Grup ' + jid.split('@')[0].slice(0, 6);
+        return jid.split('@')[0];
+      };
+      const shortenName = (name) =>
+        (name || '').length > 18 ? name.slice(0, 18) + '…' : name;
+
+      async function api(url, opts = {}) {
+        const res = await fetch(API + url, {
+          ...opts,
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(opts.headers || {}),
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && res.status === 401) {
+          showLogin();
+          throw new Error('Unauthorized');
+        }
+        if (!data.success)
+          throw new Error(data.message || 'Error ' + res.status);
+        return data;
+      }
+
+      function fmtTs(ts) {
+        if (!ts) return '';
+        const d = new Date(ts);
+        const now = new Date();
+        if (d.toDateString() === now.toDateString()) {
+          return d.toLocaleTimeString('id-ID', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+        }
+        return (
+          d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) +
+          ' ' +
+          d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+        );
+      }
+
+      function extractText(msg) {
+        if (!msg?.message) return '';
+        const m = msg.message;
+        if (m.conversation) return m.conversation;
+        if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
+        if (m.imageMessage?.caption) return '🖼 ' + m.imageMessage.caption;
+        if (m.videoMessage?.caption) return '🎬 ' + m.videoMessage.caption;
+        if (m.audioMessage) return '🎵 Pesan suara';
+        if (m.documentMessage)
+          return '📄 ' + (m.documentMessage.fileName || 'Dokumen');
+        if (m.stickerMessage) return '🖼 Stiker';
+        if (m.imageMessage) return '🖼 Gambar';
+        if (m.videoMessage) return '🎬 Video';
+        if (m.contactMessage) return '👤 Kontak';
+        if (m.locationMessage) return '📍 Lokasi';
+        if (m.reactionMessage) return '⚡ Reaksi';
+        if (m.buttonsMessage) return '🔘 Tombol';
+        if (m.listMessage || m.listResponseMessage) return '📋 Daftar';
+        if (m.protocolMessage) return '🔒 Spanning Message';
+        if (m.ephemeralMessage) return extractText(m.ephemeralMessage.message);
+        return '📎 Pesan';
+      }
+
+      async function init() {
+        const meRes = await fetch(API + '/auth/me');
+        const meData = await meRes.json().catch(() => null);
+        if (meData?.success && meData.data) {
+          me = meData.data;
+          showApp();
+        } else {
+          showLogin();
+        }
+      }
+
+      function showLogin() {
+        es?.close();
+        $('appView').classList.add('hidden');
+        $('loginView').style.display = 'flex';
+      }
+
+      function showApp() {
+        $('loginView').style.display = 'none';
+        $('appView').classList.remove('hidden');
+        $('chipName').textContent = me.displayName;
+        $('chipUser').textContent = '@' + me.username;
+        refreshAll();
+        connectSse();
+      }
+
+      $('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        $('loginErr').textContent = '';
+        try {
+          const r = await api('/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({
+              username: $('loginUser').value.trim(),
+              password: $('loginPass').value,
+            }),
+          });
+          me = r.data;
+          $('loginPass').value = '';
+          showApp();
+        } catch (err) {
+          $('loginErr').textContent = err.message;
+        }
+      });
+
+      async function logout() {
+        await fetch(API + '/auth/logout', { method: 'POST' });
+        me = null;
+        showLogin();
+      }
+
+      // ── SSE ──
+      function getJwtFromCookie() {
+        const match = document.cookie.match(
+          new RegExp('(^| )' + 'wagss_session' + '=([^;]+)'),
+        );
+        return match ? match[2] : null;
+      }
+
+      function connectSse() {
+        es?.close();
+        const token = getJwtFromCookie();
+        const url = token
+          ? API + '/sse/live?token=' + encodeURIComponent(token)
+          : API + '/sse/live';
+        es = new EventSource(url, { withCredentials: true });
+        es.onmessage = (e) => {
+          let evt;
+          try {
+            evt = JSON.parse(e.data);
+          } catch {
+            return;
+          }
+          handleSse(evt);
+        };
+        es.onerror = () => {
+          setTimeout(() => {
+            if (me) connectSse();
+          }, 3000);
+        };
+      }
+
+      function handleSse(evt) {
+        const d = evt.data || {};
+        switch (evt.type) {
+          case 'device_state':
+            updateBaileysStatus(d.status, d.isLoggedIn);
+            if (d.isLoggedIn && !currentJid) {
+              stopQrPoll();
+              $('linkView').classList.add('hidden');
+              $('btnStop').style.display = '';
+              loadChats();
+            } else if (!d.isLoggedIn && !currentJid) {
+              // stopped / QR timeout: halt polling, show pairing options
+              stopQrPoll();
+              maybeShowLink();
+            }
+            break;
+          case 'message':
+            if (d.chatJid === currentJid) {
+              messages.push(transformMsg(d.message, d.sentByUser));
+              messages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+              renderMessages();
+              scrollBottom();
+            }
+            loadChats();
+            break;
+          case 'typing':
+            if (d.chatJid === currentJid && d.username !== me.username) {
+              $('typingBanner').style.display = 'block';
+              $('typingBanner').textContent = d.typing
+                ? d.username + ' sedang mengetik…'
+                : '';
+              if (!d.typing) $('typingBanner').style.display = 'none';
+            }
+            break;
+          case 'presence':
+            if (
+              currentJid === d.jid &&
+              d.presence === 'composing' &&
+              currentJid !== 'all'
+            ) {
+              $('typingBanner').style.display = 'block';
+              $('typingBanner').textContent = 'Kontak sedang mengetik…';
+              setTimeout(() => {
+                $('typingBanner').style.display = 'none';
+              }, 3000);
+            }
+            break;
+          case 'message_status':
+            messages.forEach((m) => {
+              if (m.key?.id === d.id && m.key?.remoteJid === d.jid)
+                m.waStatus = d.status;
+            });
+            if (d.jid === currentJid) renderMessages();
+            break;
+          case 'reaction':
+            if (d.chatJid === currentJid) {
+              loadReactionsAndRender(d.chatJid);
+            }
+            break;
+          case 'message_deleted':
+            if (d.chatJid === currentJid) {
+              const del = messages.find(
+                (m) =>
+                  m.key?.id === d.messageId && m.key?.remoteJid === d.chatJid,
+              );
+              if (del) {
+                del.deleted = true;
+                del.text = '';
+                renderMessages();
+              }
+            }
+            break;
+          case 'message_edited':
+            if (d.chatJid === currentJid) {
+              const edt = messages.find(
+                (m) =>
+                  m.key?.id === d.messageId && m.key?.remoteJid === d.chatJid,
+              );
+              if (edt) {
+                edt.text = d.text;
+                edt.editedAt = Date.now();
+                renderMessages();
+              }
+            }
+            break;
+          case 'chats':
+            loadChats();
+            break;
+          case 'contact':
+            if (currentJid === d.jid) {
+              loadChats();
+            }
+            break;
+          case 'history_done':
+            loadChats();
+            if (currentJid) loadMessages(true);
+            break;
+        }
+      }
+
+      function transformMsg(msg, sentByUser) {
+        const mm = msg?.message || {};
+        const rawJpeg =
+          (mm.imageMessage || mm.videoMessage || {}).jpegThumbnail || null;
+        return {
+          ...msg,
+          ts: Number(msg.messageTimestamp || 0) * 1000,
+          text: extractText(msg),
+          sentByUser,
+          mediaType: ['image', 'video', 'audio', 'document', 'sticker'].find(
+            (t) => mm[t + 'Message'],
+          ),
+          jpegThumbnail: rawJpeg
+            ? 'data:image/jpeg;base64,' +
+              btoa(String.fromCharCode(...new Uint8Array(rawJpeg)))
+            : null,
+        };
+      }
+
+      const reactionsCache = {};
+
+      function loadReactionsAndRender(chatJid) {
+        api('/messages/' + encodeURIComponent(chatJid) + '/reactions')
+          .then((r) => {
+            reactionsCache[chatJid] = r.data;
+            renderMessages();
+          })
+          .catch(() => {});
+      }
+
+      function reactionBadges(m) {
+        const list = (reactionsCache[m.key?.remoteJid] || {})[m.key?.id] || [];
+        if (!list.length) return '';
+        const agg = {};
+        list.forEach((r) => {
+          agg[r.reaction_text] = (agg[r.reaction_text] || 0) + 1;
+        });
+        return (
+          '<div class="react-row">' +
+          Object.entries(agg)
+            .map(
+              ([txt, n]) =>
+                '<span class="react">' +
+                txt +
+                (n > 1 ? ' ' + n : '') +
+                '</span>',
+            )
+            .join('') +
+          '</div>'
+        );
+      }
+
+      function mediaHtml(m, chatJidEnc) {
+        const mt = m.mediaType;
+        const msgIdEnc = encodeURIComponent(m.key?.id || '');
+        const apiPath = '/media/' + chatJidEnc + '/' + msgIdEnc;
+        if (mt === 'sticker') {
+          return (
+            '<div class="media"><img src="' +
+            apiPath +
+            '?download=1" alt="sticker" style="max-width:160px;border-radius:6px"></div>'
+          );
+        }
+        if (mt === 'image') {
+          const body = m.jpegThumbnail
+            ? '<img src="' +
+              m.jpegThumbnail +
+              '" class="blur" style="max-width:260px;max-height:260px;border-radius:6px">'
+            : '';
+          return (
+            '<div class="media-blur" style="position:relative;max-width:260px">' +
+            (body ||
+              '<div class="media-ph" style="width:220px;height:140px">🖼 Media</div>') +
+            '<div class="media-dl" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);border-radius:6px"><button onclick="event.stopPropagation();downloadMediaNow(\'' +
+            apiPath +
+            '\')" style="background:#00a884;border:none;color:#fff;padding:8px 14px;border-radius:8px">Download</button></div>' +
+            '</div>'
+          );
+        }
+        if (mt === 'video' || mt === 'audio') {
+          const tag = mt === 'video' ? 'video' : 'audio';
+          return (
+            '<div class="media"><' +
+            tag +
+            ' controls src="' +
+            apiPath +
+            '?download=1" style="max-width:280px;border-radius:6px"></' +
+            tag +
+            '></div>'
+          );
+        }
+        if (mt === 'document') {
+          return (
+            '<div class="media-doc"><a href="' +
+            apiPath +
+            '?download=1" download style="color:#53bdeb">📄 ' +
+            escapeHtml(extractFileName(m) || 'Dokumen') +
+            '</a></div>'
+          );
+        }
+        return '';
+      }
+
+      function extractFileName(m) {
+        const dm = m.message?.documentMessage;
+        return dm?.fileName || null;
+      }
+
+      async function downloadMediaNow(path) {
+        try {
+          const anchor = document.createElement('a');
+          anchor.href = path + '?download=1';
+          anchor.target = '_blank';
+          anchor.click();
+        } catch (err) {
+          alert(err.message);
+        }
+      }
+
+      // ── Auth/Link/Status ──
+      let qrPoll = null;
+
+      function stopQrPoll() {
+        if (qrPoll) {
+          clearInterval(qrPoll);
+          qrPoll = null;
+        }
+      }
+
+      function maybeShowLink() {
+        $('linkView').classList.remove('hidden');
+        $('chatView').classList.add('hidden');
+        currentJid = null;
+        $('qrImg').classList.add('hidden');
+        $('pairCode').classList.add('hidden');
+        $('linkStatus').textContent =
+          'Pilih metode pairing. Jika layar kosong dalam 1 menit, proses berhenti otomatis.';
+      }
+
+      async function refreshLinkState() {
+        try {
+          const r = await api('/session');
+          const st = r.data;
+          updateBaileysStatus(st.connectionState, st.isLoggedIn);
+          $('btnStop').style.display = st.isLoggedIn ? '' : 'none';
+          if (st.isLoggedIn) {
+            stopQrPoll();
+            $('linkView').classList.add('hidden');
+            if (!currentJid) loadChats();
+            return;
+          }
+          if (!currentJid) {
+            maybeShowLink();
+            if (st.connectionState === 'connecting') startQrPoll();
+          }
+        } catch (err) {
+          if (!currentJid) maybeShowLink();
+        }
+      }
+
+      function fetchQrAndShow() {
+        api('/session/qr-code')
+          .then((r) => {
+            const d = r.data;
+            $('qrImg').classList.add('hidden');
+            $('pairCode').classList.add('hidden');
+            if (d.qrCode) {
+              $('qrImg').classList.remove('hidden');
+              QRCode.toDataURL(d.qrCode, { width: 230 }).then((url) => {
+                $('qrImg').src = url;
+              });
+            }
+            if (d.pairingCode) {
+              $('pairCode').classList.remove('hidden');
+              $('pairCode').textContent = d.pairingCode;
+            }
+            if (d.qrCode && d.pairingCode) {
+              $('linkStatus').textContent =
+                'Scan QR atau masukkan kode pairing via WhatsApp.';
+            } else if (d.qrCode) {
+              $('linkStatus').textContent =
+                'Scan QR dengan WhatsApp. Habis 1 menit tanpa scan = berhenti.';
+            } else if (d.pairingCode) {
+              $('linkStatus').textContent =
+                'Masukkan kode pairing di WhatsApp.';
+            } else {
+              $('linkStatus').textContent =
+                'Menghubungkan… silakan tunggu QR atau kode pairing.';
+            }
+          })
+          .catch(() => {});
+      }
+
+      function startQrPoll() {
+        fetchQrAndShow();
+        if (!qrPoll) qrPoll = setInterval(fetchQrAndShow, 4000);
+      }
+
+      async function startSession(useNumber) {
+        let phoneNumber = null;
+        if (useNumber) {
+          phoneNumber = $('phoneInput').value.trim();
+          if (!phoneNumber) {
+            $('linkStatus').textContent =
+              'Isi nomor HP dulu untuk pairing via number.';
+            return;
+          }
+        }
+        $('linkStatus').textContent = 'Memulai proses Baileys…';
+        try {
+          const r = await api('/session/start', {
+            method: 'POST',
+            body: JSON.stringify(phoneNumber ? { phoneNumber } : {}),
+          });
+          updateBaileysStatus(r.data.connectionState, r.data.isLoggedIn);
+          startQrPoll();
+        } catch (err) {
+          $('linkStatus').textContent = err.message;
+        }
+      }
+
+      function updateBaileysStatus(state, isLoggedIn) {
+        const el = $('baileysStatus');
+        if (isLoggedIn) {
+          el.textContent = 'Baileys: online';
+          el.style.color = '#00a884';
+        } else if (state === 'connecting') {
+          el.textContent = 'Baileys: connecting…';
+          el.style.color = '#ffd667';
+        } else {
+          el.textContent = 'Baileys: offline';
+          el.style.color = '#8696a0';
+        }
+      }
+
+      async function toggleBaileys() {
+        // Already running? Refresh link view; else start via QR.
+        try {
+          const r = await api('/session');
+          if (r.data.isLoggedIn) {
+            stopQrPoll();
+            $('linkView').classList.add('hidden');
+            loadChats();
+            return;
+          }
+        } catch {}
+        $('linkView').classList.remove('hidden');
+        $('chatView').classList.add('hidden');
+        currentJid = null;
+        startSession(false);
+      }
+
+      async function confirmStop() {
+        if (!confirm('Hentikan proses Baileys? WhatsApp akan offline.')) return;
+        try {
+          const r = await api('/session');
+          if (!r.data.isLoggedIn && r.data.connectionState !== 'connecting') {
+            updateBaileysStatus('close', false);
+            return;
+          }
+        } catch {}
+        try {
+          await api('/session/stop', { method: 'POST' });
+        } catch (err) {
+          alert(err.message);
+          return;
+        }
+        stopQrPoll();
+        updateBaileysStatus('close', false);
+        if (!currentJid) maybeShowLink();
+      }
+
+      // ── Chats ──
+      async function loadChats() {
+        try {
+          chats = (await api('/messages')).data.map((c) => ({ ...c }));
+          renderChats();
+        } catch {}
+        loadContacts();
+      }
+
+      async function loadContacts() {
+        try {
+          const r = await api('/contacts');
+          chatContacts = {};
+          for (const c of r.data) chatContacts[c.jid] = c;
+          // merge missing jids into chat list display
+          renderChats();
+        } catch {}
+      }
+
+      function renderChats() {
+        const q = ($('searchInput').value || '').toLowerCase();
+        const list = chats
+          .filter((c) => jidName(c.chatJid).toLowerCase().includes(q))
+          .sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+        const el = $('chatList');
+        el.innerHTML = list.length
+          ? ''
+          : '<div style="padding:20px;color:#8696a0;text-align:center">Belum ada chat</div>';
+        for (const c of list) {
+          const div = document.createElement('div');
+          div.className =
+            'chat-item' + (c.chatJid === currentJid ? ' active' : '');
+          const last = c.lastMessage ? extractText(c.lastMessage) : '';
+          div.innerHTML =
+            '<div class="ava">' +
+            (jidName(c.chatJid).charAt(0) || '?') +
+            '</div>' +
+            '<div class="meta"><div class="name">' +
+            shortenName(jidName(c.chatJid)) +
+            '</div>' +
+            '<div class="last">' +
+            (last || '') +
+            '</div></div>' +
+            '<div class="right"><div class="time">' +
+            fmtTs(c.lastTimestamp) +
+            '</div>' +
+            (c.unreadCount
+              ? '<div class="badge">' + c.unreadCount + '</div>'
+              : '') +
+            '</div>';
+          div.onclick = () => openChat(c.chatJid);
+          el.appendChild(div);
+        }
+      }
+
+      // ── Chat ──
+      async function openChat(jid) {
+        currentJid = jid;
+        msgOffset = 0;
+        replyKey = null;
+        cancelReply();
+        document
+          .querySelectorAll('.chat-item')
+          .forEach((e) => e.classList.remove('active'));
+        $('chatView').classList.remove('hidden');
+        $('linkView').classList.add('hidden');
+        $('chatName').textContent = jidName(jid);
+        $('chatAvatar').textContent = jidName(jid).charAt(0);
+        $('typingBanner').style.display = 'none';
+        try {
+          const st = (await api('/session')).data;
+          $('chatSub').textContent = st.isLoggedIn ? 'online' : 'offline';
+          updateBaileysStatus(st.connectionState, st.isLoggedIn);
+        } catch {
+          $('chatSub').textContent = 'offline';
+        }
+        await loadMessages(true);
+        markRead();
+        renderChats();
+      }
+
+      async function loadMessages(reset) {
+        if (reset) {
+          msgOffset = 0;
+          messages = [];
+        }
+        const r = await api(
+          '/messages/' +
+            encodeURIComponent(currentJid) +
+            '?limit=50&offset=' +
+            msgOffset,
+        );
+        const rows = r.data;
+        for (const row of rows) {
+          const msg = row.message;
+          const m = transformMsg(msg, row.sent_by_user);
+          m.senderName = row.sender_name;
+          m.readAt = row.read_at;
+          m.deleted = !!row.deleted;
+          m.editedAt = row.edited_at || null;
+          messages.push(m);
+        }
+        messages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        msgOffset += rows.length;
+        loadReactionsAndRender(currentJid);
+        renderMessages();
+        scrollBottom();
+      }
+
+      function renderMessages() {
+        const el = $('messagesArea');
+        el.innerHTML = '';
+        if (messages.length === 0) {
+          el.innerHTML =
+            '<div style="color:#8696a0;text-align:center;padding:40px">Tidak ada pesan</div>';
+          return;
+        }
+        for (const m of messages) {
+          const div = document.createElement('div');
+          const out = !!m.key?.fromMe;
+          div.className = 'msg ' + (out ? 'out' : 'in');
+          let html = '';
+          if (!out && m.senderName && m.key?.remoteJid?.includes('@g.us')) {
+            html += '<div class="sender">' + m.senderName + '</div>';
+          }
+          if (m.deleted) {
+            html +=
+              '<div style="font-style:italic;color:#8696a0">☠️ Pesan dihapus</div>';
+          } else if (m.text !== '')
+            html += '<div>' + escapeHtml(m.text) + '</div>';
+          else if (!m.mediaType) html += '<div>📎 Punch</div>';
+          if (m.mediaType) {
+            html += mediaHtml(m, encodeURIComponent(m.key?.remoteJid || ''));
+          }
+          html += reactionBadges(m);
+          if (m.sentByUser)
+            html +=
+              '<div class="attrib" style="text-align:right">-' +
+              m.sentByUser +
+              '</div>';
+          html += '<div class="meta-row">';
+          html += '<span class="time">' + fmtTs(m.ts) + '</span>';
+          if (m.editedAt)
+            html +=
+              '<span style="font-size:11px;color:#8696a0">(diedit)</span>';
+          if (out) {
+            html +=
+              '<span class="tick">' +
+              (m.waStatus === 'read'
+                ? '✓✓'
+                : m.waStatus === 'delivered'
+                  ? '✓✓'
+                  : '✓') +
+              '</span>';
+          }
+          html += '</div>';
+          div.innerHTML = html;
+          div.onclick = () => selectForReply(m);
+          el.appendChild(div);
+        }
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+            })[c],
+        );
+      }
+
+      function scrollBottom() {
+        const el = $('messagesArea');
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function selectForReply(m) {
+        replyKey = m.key;
+        $('replyPreview').style.display = 'flex';
+        $('rpName').textContent = m.key?.fromMe
+          ? shortenName(me.displayName)
+          : shortenName(jidName(m.key?.remoteJid));
+        $('rpText').textContent = m.text || '📎 Punch';
+      }
+
+      function cancelReply() {
+        replyKey = null;
+        $('replyPreview').style.display = 'none';
+      }
+
+      async function sendMsg() {
+        const input = $('msgInput');
+        const text = input.value.trim();
+        if (!text) return;
+        try {
+          if (replyKey) {
+            await api('/messages/send-reply', {
+              method: 'POST',
+              body: JSON.stringify({
+                recipient: currentJid,
+                message: text,
+                messageKey: currentJid + '-' + replyKey.id,
+              }),
+            });
+          } else {
+            await api('/messages/send-text', {
+              method: 'POST',
+              body: JSON.stringify({ recipient: currentJid, message: text }),
+            });
+          }
+          input.value = '';
+          cancelReply();
+          sendTyping(false);
+        } catch (err) {
+          alert(err.message);
+        }
+      }
+
+      function onInputKey(e) {
+        if (e.key === 'Enter') sendMsg();
+      }
+
+      function onLocalTyping() {
+        if (!currentJid) return;
+        sendTyping(true);
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => sendTyping(false), 1500);
+      }
+
+      let lastTypingSent = false;
+      function sendTyping(typing) {
+        if (typing === lastTypingSent) return;
+        lastTypingSent = typing;
+        api('/presence/typing', {
+          method: 'POST',
+          body: JSON.stringify({ jid: currentJid, typing }),
+        }).catch(() => {});
+      }
+
+      async function markRead() {
+        if (!currentJid) return;
+        api('/messages/read', {
+          method: 'POST',
+          body: JSON.stringify({ jid: currentJid }),
+        }).catch(() => {});
+      }
+
+      // ── Users ──
+      function openUsers() {
+        $('usersModal').classList.remove('hidden');
+        loadUsers();
+      }
+
+      function closeUsers() {
+        $('usersModal').classList.add('hidden');
+        $('usersErr').textContent = '';
+      }
+
+      async function loadUsers() {
+        try {
+          const r = await api('/users');
+          const el = $('usersList');
+          el.innerHTML = '';
+          for (const u of r.data) {
+            const div = document.createElement('div');
+            div.className = 'row';
+            div.innerHTML =
+              '<div><div class="u-name">' +
+              escapeHtml(u.display_name) +
+              (u.id === me.userId ? ' (kamu)' : '') +
+              '</div>' +
+              '<div class="u-sub">@' +
+              escapeHtml(u.username) +
+              ' · ' +
+              (u.is_active ? 'aktif' : 'nonaktif') +
+              (u.created_by
+                ? ' · dibuat oleh ' + escapeHtml(u.created_by)
+                : '') +
+              '</div></div>' +
+              '<div>' +
+              (u.id !== me.userId
+                ? '<button class="btn btn-ghost" style="margin-right:6px" onclick="toggleUser(' +
+                  u.id +
+                  ',' +
+                  String(u.is_active) +
+                  ')">' +
+                  (u.is_active ? 'Nonaktifkan' : 'Aktifkan') +
+                  '</button>' +
+                  '<button class="btn btn-danger" onclick="deleteUser(' +
+                  u.id +
+                  ')">Hapus</button>'
+                : '<span style="color:#8696a0;font-size:12px">—</span>') +
+              '</div>';
+            el.appendChild(div);
+          }
+        } catch (err) {
+          $('usersErr').textContent = err.message;
+        }
+      }
+
+      async function createUser() {
+        const username = $('nuUser').value.trim();
+        const displayName = $('nuName').value.trim();
+        const password = $('nuPass').value;
+        $('usersErr').textContent = '';
+        try {
+          await api('/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({ username, password, displayName }),
+          });
+          $('nuUser').value = $('nuName').value = $('nuPass').value = '';
+          loadUsers();
+        } catch (err) {
+          $('usersErr').textContent = err.message;
+        }
+      }
+
+      async function toggleUser(id, active) {
+        try {
+          await api('/users/' + id, {
+            method: 'PATCH',
+            body: JSON.stringify({ isActive: !active }),
+          });
+          loadUsers();
+        } catch (err) {
+          $('usersErr').textContent = err.message;
+        }
+      }
+
+      async function deleteUser(id) {
+        if (!confirm('Hapus pengguna ini?')) return;
+        try {
+          await api('/users/' + id, { method: 'DELETE' });
+          loadUsers();
+        } catch (err) {
+          $('usersErr').textContent = err.message;
+        }
+      }
+
+      // ── Boot ──
+      async function refreshAll() {
+        refreshLinkState();
+        loadChats();
+      }
+
+      init();
+    </script>
+  </body>
+</html>
