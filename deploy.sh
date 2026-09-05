@@ -103,12 +103,12 @@ if [ -d "${APP_DIR}" ]; then
     su - ${APP_USER} -c "cd ${APP_DIR} && git pull"
   fi
 else
-  sudo -u ${APP_USER} git clone https://github.com/RenoXF/wagss.git ${APP_DIR}
+  su - ${APP_USER} -c "git clone https://github.com/RenoXF/wagss.git ${APP_DIR}"
   cd ${APP_DIR}
 fi
 
 # Install dependencies
-sudo -u ${APP_USER} bash -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && cd ${APP_DIR} && bun install"
+su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && cd ${APP_DIR} && bun install"
 
 # ── 6. Create .env ──
 echo ""
