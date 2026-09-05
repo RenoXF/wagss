@@ -89,7 +89,6 @@ export function cookieHeader(
     'SameSite=Lax',
     `Max-Age=${maxAge}`,
   ];
-  if (Bun.env.NODE_ENV === 'production') parts.push('Secure');
   return parts.join('; ');
 }
 

@@ -7,18 +7,18 @@ Wants=postgresql.service
 Type=simple
 User=wagss
 Group=wagss
-WorkingDirectory=/opt/wagss
+WorkingDirectory=/home/wagss
 ExecStart=/home/wagss/.bun/bin/bun run src/index.ts
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-EnvironmentFile=/opt/wagss/.env
+EnvironmentFile=/home/wagss/.env
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/wagss /var/lib/wagss /var/log/wagss
+ReadWritePaths=/home/wagss /var/lib/wagss /var/log/wagss
 PrivateTmp=true
 
 [Install]
