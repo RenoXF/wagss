@@ -44,15 +44,16 @@ echo ""
 echo "[2/6] Installing Bun..."
 if ! command -v bun &> /dev/null; then
   curl -fsSL https://bun.sh/install | bash
-  BUN_BIN=$(which bun)
-  ln -sf ${BUN_BIN} /usr/local/bin/bun
-  echo "  Installed: $(bun --version)"
-else
-  BUN_BIN=$(which bun)
-  ln -sf ${BUN_BIN} /usr/local/bin/bun
-  echo "  Already installed: $(bun --version)"
 fi
+# Ensure symlink to system-wide path
+BUN_BIN=$(find /root/.bun/bin /home/*/.bun/bin /usr/local/bin -name bun -type f 2>/dev/null | head -1)
+if [ -z "${BUN_BIN}" ]; then
+  echo "  Error: bun not found after install"
+  exit 1
+fi
+ln -sf "${BUN_BIN}" /usr/local/bin/bun
 echo "  Binary: ${BUN_BIN} -> /usr/local/bin/bun"
+echo "  Version: $(/usr/local/bin/bun --version)"
 
 # ── 3. Install LibreOffice ──
 echo ""
@@ -73,7 +74,7 @@ chown -R ${APP_USER}:${APP_USER} /home/${APP_USER}
 # ── 5. Install Dependencies ──
 echo ""
 echo "[5/6] Installing dependencies..."
-su - ${APP_USER} -c "cd ${APP_DIR} && bun install"
+su - ${APP_USER} -c "cd ${APP_DIR} && /usr/local/bin/bun install"
 
 # ── 6. Setup PM2 ──
 echo ""
