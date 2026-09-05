@@ -15,6 +15,28 @@ export interface ChatSummary {
 
 export const msgId = (chatJid: string, keyId: string) => `${chatJid}-${keyId}`;
 
+/**
+ * Normalize Baileys message content by unwrapping future-proof wrappers.
+ * Mirrors baileys/lib/Utils/messages.js normalizeMessageContent (5x loop).
+ */
+export function normalizeMessageContent(msg: any): any {
+  let m = msg?.message;
+  if (!m) return m;
+  for (let i = 0; i < 5; i++) {
+    const inner =
+      m.ephemeralMessage?.message ||
+      m.viewOnceMessage?.message ||
+      m.viewOnceMessageV2?.message ||
+      m.viewOnceMessageV2Extension?.message ||
+      m.documentWithCaptionMessage?.message ||
+      m.associatedChildMessage?.message ||
+      null;
+    if (!inner) break;
+    m = inner;
+  }
+  return m;
+}
+
 export type Row = {
   id: string;
   chat_jid: string;
@@ -34,11 +56,13 @@ export type Row = {
   original_message: unknown;
   edited_at: number | null;
   original_message_id: string | null;
+  message_text: string | null;
+  deleted: boolean;
 };
 
 /** Extract a normalized text payload from a Baileys proto message. */
 export function extractText(msg: any): string {
-  const m = msg?.message;
+  const m = normalizeMessageContent(msg);
   if (!m) {
     // Handle stub/system messages (e.g., old counter, decryption failure)
     if (msg?.messageStubType != null) {
@@ -54,8 +78,7 @@ export function extractText(msg: any): string {
   if (m.imageMessage?.caption) return m.imageMessage.caption || '';
   if (m.videoMessage?.caption) return m.videoMessage.caption || '';
   if (m.documentMessage?.caption) return m.documentMessage.caption || '';
-  if (m.ephemeralMessage?.message)
-    return extractText(m.ephemeralMessage.message);
+  if (m.ptvMessage?.caption) return m.ptvMessage.caption || '';
   if (m.messageStubType != null) {
     const p = (m as any).messageStubParameters?.[0] as string | undefined;
     if (p?.includes('old counter')) return '🔒 Pesan terenkripsi';
@@ -88,12 +111,7 @@ export type MediaMeta = {
 
 /** Pull media metadata (type, mime, size, dims) off a Baileys message. */
 export function extractMediaMeta(msg: any): MediaMeta {
-  let m: any = msg?.message;
-  if (m?.ephemeralMessage?.message) m = m.ephemeralMessage.message;
-  if (m?.viewOnceMessage?.message) m = m.viewOnceMessage.message;
-  if (m?.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
-  if (m?.documentWithCaptionMessage?.message)
-    m = m.documentWithCaptionMessage.message;
+  const m = normalizeMessageContent(msg);
   const patch: MediaMeta = {
     media_type: null,
     media_mime_type: null,
@@ -138,6 +156,14 @@ export function extractMediaMeta(msg: any): MediaMeta {
       patch.media_mime_type = m2.mimetype ?? null;
       patch.media_size = m2.fileLength ?? null;
     },
+    ptvMessage(m2: any) {
+      patch.media_type = 'video';
+      patch.media_mime_type = m2.mimetype ?? null;
+      patch.media_size = m2.fileLength ?? null;
+      patch.media_duration = m2.seconds ?? null;
+      patch.media_width = m2.width ?? null;
+      patch.media_height = m2.height ?? null;
+    },
   };
   for (const type of Object.keys(pick)) {
     if (m[type]) (pick[type] as (v: any) => void)(m[type]);
@@ -156,12 +182,7 @@ export function extractMediaMeta(msg: any): MediaMeta {
 /** Extract full message metadata for storage columns. */
 export function extractMessageMeta(msg: any) {
   const message_type = Object.keys(msg?.message ?? {})[0] ?? null;
-  let mm: any = msg?.message;
-  if (mm?.ephemeralMessage?.message) mm = mm.ephemeralMessage.message;
-  if (mm?.viewOnceMessage?.message) mm = mm.viewOnceMessage.message;
-  if (mm?.viewOnceMessageV2?.message) mm = mm.viewOnceMessageV2.message;
-  if (mm?.documentWithCaptionMessage?.message)
-    mm = mm.documentWithCaptionMessage.message;
+  const mm = normalizeMessageContent(msg);
   const quoted =
     msg?.message?.extendedTextMessage?.contextInfo ??
     mm?.imageMessage?.contextInfo ??

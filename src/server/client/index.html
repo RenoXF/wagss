@@ -1039,6 +1039,190 @@
         background: #00bf8f;
       }
 
+      /* ═══ FILE PREVIEW MODAL ═══ */
+      .fp-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 55;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+      }
+      .fp-overlay.show {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .fp-modal {
+        background: #202c33;
+        border-radius: 12px;
+        width: 480px;
+        max-width: 94vw;
+        max-height: 88vh;
+        display: flex;
+        flex-direction: column;
+        transform: scale(0.95);
+        transition: transform 0.2s;
+        overflow: hidden;
+      }
+      .fp-overlay.show .fp-modal {
+        transform: scale(1);
+      }
+      .fp-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 18px 12px;
+        border-bottom: 1px solid #2f3b43;
+      }
+      .fp-header h3 {
+        margin: 0;
+        font-size: 16px;
+        color: #e9edef;
+      }
+      .fp-header .fp-count {
+        font-size: 12px;
+        color: #aebac1;
+      }
+      .fp-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 18px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: 8px;
+        max-height: 45vh;
+      }
+      .fp-thumb {
+        position: relative;
+        border-radius: 8px;
+        overflow: hidden;
+        aspect-ratio: 1;
+        background: #111b21;
+        cursor: default;
+      }
+      .fp-thumb img,
+      .fp-thumb video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .fp-thumb .fp-doc-icon {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #aebac1;
+        font-size: 28px;
+        line-height: 1;
+      }
+      .fp-thumb .fp-doc-name {
+        font-size: 9px;
+        color: #aebac1;
+        margin-top: 4px;
+        text-align: center;
+        padding: 0 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 80px;
+      }
+      .fp-thumb .fp-remove {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.65);
+        color: #fff;
+        border: none;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      .fp-thumb:hover .fp-remove {
+        opacity: 1;
+      }
+      .fp-footer {
+        padding: 10px 18px 14px;
+        border-top: 1px solid #2f3b43;
+      }
+      .fp-caption {
+        width: 100%;
+        min-height: 38px;
+        max-height: 80px;
+        resize: none;
+        border: none;
+        border-radius: 8px;
+        padding: 9px 12px;
+        background: #2a3942;
+        color: #e9edef;
+        font-size: 14px;
+        font-family: inherit;
+        outline: none;
+        box-sizing: border-box;
+      }
+      .fp-caption::placeholder {
+        color: #8696a0;
+      }
+      .fp-footer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 8px;
+      }
+      .fp-footer-row .fp-size-info {
+        font-size: 11px;
+        color: #8696a0;
+      }
+      .fp-send-btn {
+        background: #00a884;
+        border: none;
+        border-radius: 50%;
+        color: #fff;
+        width: 38px;
+        height: 38px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .fp-send-btn:hover {
+        background: #00bf8f;
+      }
+      .fp-send-btn:disabled {
+        background: #3b5463;
+        cursor: not-allowed;
+      }
+      .fp-add-more {
+        border: 2px dashed #3b5463;
+        border-radius: 8px;
+        aspect-ratio: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        color: #8696a0;
+        cursor: pointer;
+        transition:
+          border-color 0.15s,
+          color 0.15s;
+      }
+      .fp-add-more:hover {
+        border-color: #00a884;
+        color: #00a884;
+      }
+
       /* ═══ LOAD MORE ═══ */
       .load-more {
         margin: 10px auto;
@@ -1816,6 +2000,7 @@
                   📎
                 </button>
                 <div id="attachMenu" class="attach-menu hidden">
+                  <button onclick="openFpFileInput()">📁 File</button>
                   <button onclick="attachLocation()">📍 Location</button>
                   <button onclick="attachContact()">👤 Contact</button>
                   <button onclick="openPollModal()">📊 Poll</button>
@@ -1865,6 +2050,60 @@
           </div>
         </div>
       </div>
+
+      <div
+        id="fpOverlay"
+        class="fp-overlay"
+        onclick="if (event.target === this) closeFpModal();"
+      >
+        <div class="fp-modal">
+          <div class="fp-header">
+            <div>
+              <h3>Kirim File</h3>
+              <span id="fpCount" class="fp-count"></span>
+            </div>
+            <button
+              onclick="closeFpModal()"
+              style="
+                background: none;
+                border: none;
+                color: #aebac1;
+                font-size: 20px;
+                cursor: pointer;
+              "
+            >
+              ×
+            </button>
+          </div>
+          <div id="fpBody" class="fp-body"></div>
+          <div class="fp-footer">
+            <textarea
+              id="fpCaption"
+              class="fp-caption"
+              placeholder="Tambah keterangan..."
+              rows="1"
+            ></textarea>
+            <div class="fp-footer-row">
+              <span id="fpSizeInfo" class="fp-size-info"></span>
+              <button
+                id="fpSendBtn"
+                class="fp-send-btn"
+                onclick="sendFpFiles()"
+                title="Kirim"
+              >
+                ➤
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <input
+        type="file"
+        id="fpFileInput"
+        multiple
+        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+        style="display: none"
+      />
 
       <div
         id="groupDrawerOverlay"
@@ -3001,12 +3240,31 @@
           );
         }
         if (mt === 'document') {
+          const docName = extractFileName(m) || 'Dokumen';
+          const docExt = docName.split('.').pop().toLowerCase();
+          const docIcons = {
+            doc: '📄',
+            docx: '📄',
+            xls: '📊',
+            xlsx: '📊',
+            ppt: '📑',
+            pptx: '📑',
+            pdf: '📋',
+            txt: '📝',
+            csv: '📝',
+          };
+          const docIcon = docIcons[docExt] || '📄';
+          const docMime = (m.mediaMimeType || '').toLowerCase();
           return (
             badgeWrap +
             '<div class="media-doc" style="cursor:pointer;display:flex;align-items:center;gap:8px" onclick="event.stopPropagation();openMediaModal(\'' +
             apiPath +
-            '\',\'document\')"><span style="color:#53bdeb">📄 ' +
-            escapeHtml(extractFileName(m) || 'Dokumen') +
+            "','document','" +
+            escapeHtml(docMime) +
+            '\')"><span style="color:#53bdeb">' +
+            docIcon +
+            ' ' +
+            escapeHtml(docName) +
             '</span></div>'
           );
         }
@@ -3471,6 +3729,7 @@
           if (row.view_once) m.viewOnce = true;
           if (row.media_duration != null) m.mediaDuration = row.media_duration;
           if (row.media_type && !m.mediaType) m.mediaType = row.media_type;
+          if (row.media_mime_type) m.mediaMimeType = row.media_mime_type;
           if (row.message?.message?.ephemeralMessage) m.isEphemeral = true;
           messages.push(m);
         }
@@ -4821,7 +5080,21 @@
         openChat(jid);
       }
 
-      function openMediaModal(apiPath, type) {
+      const CONVERTIBLE_MIMES_FE = new Set([
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.oasis.opendocument.text',
+        'application/vnd.oasis.opendocument.spreadsheet',
+        'application/vnd.oasis.opendocument.presentation',
+        'text/rtf',
+        'application/rtf',
+      ]);
+
+      function openMediaModal(apiPath, type, mimeType) {
         const url = apiPath + '?download=1';
         $('mediaModalDownload').href = url;
         $('mediaModalImg').style.display = 'none';
@@ -4838,7 +5111,11 @@
           $('mediaModalAudio').src = url;
           $('mediaModalAudio').style.display = 'block';
         } else if (type === 'document') {
-          $('mediaModalDoc').src = url;
+          const mime = (mimeType || '').toLowerCase();
+          const docUrl = CONVERTIBLE_MIMES_FE.has(mime)
+            ? apiPath + '?convert=pdf'
+            : url;
+          $('mediaModalDoc').src = docUrl;
           $('mediaModalDoc').style.display = 'block';
         }
         $('mediaModal').classList.remove('hidden');
@@ -4951,6 +5228,165 @@
         } catch (err) {
           $('usersErr').textContent = err.message;
         }
+      }
+
+      // ── File Preview / Paste / Drag-Drop ──
+      const fpState = { files: [] };
+      const FP_MAX = 10;
+      const FP_MAX_MB = 50;
+
+      function formatBytes(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+        return (b / 1048576).toFixed(1) + ' MB';
+      }
+
+      function openFpFileInput() {
+        $('attachMenu')?.classList.add('hidden');
+        $('fpFileInput').value = '';
+        $('fpFileInput').click();
+      }
+
+      $('fpFileInput').addEventListener('change', (e) => {
+        if (e.target.files.length) addFpFiles(e.target.files);
+      });
+
+      function addFpFiles(fileList) {
+        const incoming = Array.from(fileList);
+        for (const f of incoming) {
+          if (fpState.files.length >= FP_MAX) break;
+          if (
+            !fpState.files.some((x) => x.name === f.name && x.size === f.size)
+          ) {
+            fpState.files.push(f);
+          }
+        }
+        updateFpModal();
+      }
+
+      function updateFpModal() {
+        const overlay = $('fpOverlay');
+        const body = $('fpBody');
+        if (!fpState.files.length) {
+          overlay.classList.remove('show');
+          return;
+        }
+        overlay.classList.add('show');
+        $('fpCount').textContent = fpState.files.length + ' file';
+        let totalSize = 0;
+        body.innerHTML = '';
+        fpState.files.forEach((f, i) => {
+          totalSize += f.size;
+          const div = document.createElement('div');
+          div.className = 'fp-thumb';
+          if (f.type.startsWith('image/')) {
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(f);
+            div.appendChild(img);
+          } else if (f.type.startsWith('video/')) {
+            const vid = document.createElement('video');
+            vid.src = URL.createObjectURL(f);
+            vid.muted = true;
+            div.appendChild(vid);
+          } else {
+            const icon = document.createElement('div');
+            icon.className = 'fp-doc-icon';
+            const ext = (f.name.split('.').pop() || '').toUpperCase();
+            icon.innerHTML =
+              '<span>' +
+              (ext || '📄') +
+              '</span><div class="fp-doc-name">' +
+              (f.name.length > 12 ? f.name.slice(0, 10) + '…' : f.name) +
+              '</div>';
+            div.appendChild(icon);
+          }
+          const btn = document.createElement('button');
+          btn.className = 'fp-remove';
+          btn.textContent = '×';
+          btn.onclick = () => {
+            fpState.files.splice(i, 1);
+            updateFpModal();
+          };
+          div.appendChild(btn);
+          body.appendChild(div);
+        });
+        const addBtn = document.createElement('div');
+        addBtn.className = 'fp-add-more';
+        addBtn.textContent = '+';
+        addBtn.onclick = () => {
+          $('fpFileInput').value = '';
+          $('fpFileInput').click();
+        };
+        body.appendChild(addBtn);
+        $('fpSizeInfo').textContent =
+          formatBytes(totalSize) + ' / ' + FP_MAX_MB + ' MB';
+      }
+
+      function closeFpModal() {
+        fpState.files = [];
+        $('fpOverlay').classList.remove('show');
+        $('fpCaption').value = '';
+      }
+
+      async function sendFpFiles() {
+        if (!fpState.files.length || !currentJid) return;
+        const totalSize = fpState.files.reduce((s, f) => s + f.size, 0);
+        if (totalSize > FP_MAX_MB * 1024 * 1024) {
+          alert('Total ukuran melebihi ' + FP_MAX_MB + ' MB');
+          return;
+        }
+        const btn = $('fpSendBtn');
+        btn.disabled = true;
+        try {
+          const fd = new FormData();
+          fd.append('recipient', currentJid);
+          const caption = $('fpCaption').value.trim();
+          if (caption) fd.append('caption', caption);
+          for (const f of fpState.files) fd.append('files', f);
+          const res = await fetch(API + '/messages/send-media', {
+            method: 'POST',
+            credentials: 'include',
+            body: fd,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!data.success) throw new Error(data.message || 'Gagal mengirim');
+          closeFpModal();
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // Paste handler
+      document.addEventListener('paste', (e) => {
+        if ($('fpOverlay').classList.contains('show')) return;
+        const clip = e.clipboardData;
+        if (!clip || !clip.items.length) return;
+        const imgs = [];
+        for (const item of clip.items) {
+          if (item.type.startsWith('image/')) {
+            const f = item.getAsFile();
+            if (f) imgs.push(f);
+          }
+        }
+        if (imgs.length) {
+          e.preventDefault();
+          addFpFiles(imgs);
+        }
+      });
+
+      // Drag-drop on chat area
+      const chatMain = document.querySelector('main');
+      if (chatMain) {
+        chatMain.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        });
+        chatMain.addEventListener('drop', (e) => {
+          e.preventDefault();
+          if (e.dataTransfer.files.length) addFpFiles(e.dataTransfer.files);
+        });
       }
 
       // ── Boot ──

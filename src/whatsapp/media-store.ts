@@ -4,7 +4,7 @@ import { downloadMediaMessage } from 'baileys';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { msgId, setMediaPath } from './message-store';
+import { msgId, normalizeMessageContent, setMediaPath } from './message-store';
 
 const toExt = (mime: string | null | undefined): string => {
   if (!mime) return 'bin';
@@ -35,18 +35,13 @@ const typeToFolder: Record<string, string> = {
   audio: 'audios',
   document: 'documents',
   sticker: 'stickers',
+  ptv: 'videos',
 };
 
 function unwrapMedia(msg: any): { inner: any; type: string | null } {
-  let m = msg?.message;
+  const m = normalizeMessageContent(msg);
   if (!m) return { inner: null, type: null };
-  // Unwrap wrappers
-  if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message;
-  if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message;
-  if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
-  if (m.documentWithCaptionMessage?.message)
-    m = m.documentWithCaptionMessage.message;
-  const type = ['image', 'video', 'audio', 'document', 'sticker'].find(
+  const type = ['image', 'video', 'audio', 'document', 'sticker', 'ptv'].find(
     (t) => m?.[`${t}Message`],
   );
   if (!type) return { inner: null, type: null };

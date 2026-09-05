@@ -206,6 +206,114 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
     },
   )
   .post(
+    '/send-media',
+    async ({ body, user, set }) => {
+      try {
+        const whatsapp = getSession();
+        validateJid(body.recipient);
+        const attribution = user
+          ? { sentBy: user.username, senderName: user.displayName }
+          : undefined;
+        const MAX_SIZE = 50 * 1024 * 1024;
+        const files = Array.isArray(body.files) ? body.files : [body.files];
+        if (files.length === 0) {
+          set.status = 400;
+          return { success: false, message: 'No files provided' };
+        }
+        for (const f of files) {
+          if (f.size > MAX_SIZE) {
+            set.status = 413;
+            return {
+              success: false,
+              message: `File "${f.name}" exceeds 50MB limit`,
+            };
+          }
+        }
+        const mediaPool: {
+          image?: Buffer;
+          video?: Buffer;
+          caption?: string;
+        }[] = [];
+        const docPool: {
+          buffer: Buffer;
+          fileName: string;
+          mimetype: string;
+          caption?: string;
+        }[] = [];
+        for (const f of files) {
+          const buf = Buffer.from(await f.arrayBuffer());
+          const mime = f.type || 'application/octet-stream';
+          if (mime.startsWith('image/') || mime.startsWith('video/')) {
+            mediaPool.push({
+              ...(mime.startsWith('image/') ? { image: buf } : { video: buf }),
+              caption: mediaPool.length === 0 ? body.caption : undefined,
+            });
+          } else {
+            docPool.push({
+              buffer: buf,
+              fileName: f.name || 'document',
+              mimetype: mime,
+              caption:
+                docPool.length === 0 && mediaPool.length === 0
+                  ? body.caption
+                  : undefined,
+            });
+          }
+        }
+        if (mediaPool.length > 0) {
+          for (let i = 0; i < mediaPool.length; i++) {
+            const m = mediaPool[i];
+            if (!m) continue;
+            if (i === 0 && body.caption) {
+              m.caption = body.caption;
+            }
+            await whatsapp.sendMessage(
+              body.recipient,
+              m as any,
+              undefined,
+              false,
+              attribution,
+            );
+          }
+        }
+        for (const d of docPool) {
+          await whatsapp.sendMessage(
+            body.recipient,
+            {
+              document: d.buffer,
+              fileName: d.fileName,
+              mimetype: d.mimetype,
+              caption: d.caption,
+            },
+            undefined,
+            false,
+            attribution,
+          );
+        }
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        recipient: t.String({ minLength: 1 }),
+        caption: t.Optional(t.String({ maxLength: 1024 })),
+        files: t.Union([
+          t.File({ maxSize: 50 * 1024 * 1024 }),
+          t.Array(t.File({ maxSize: 50 * 1024 * 1024 }), {
+            minItems: 1,
+            maxItems: 10,
+          }),
+        ]),
+      }),
+    },
+  )
+  .post(
     '/delete',
     async ({ body, set }) => {
       try {

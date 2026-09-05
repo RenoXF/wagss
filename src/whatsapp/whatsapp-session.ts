@@ -332,7 +332,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                           originalText;
                         editedMsgForDb = {
                           key: {
-                            ...existing?.message?.key,
+                            ...((existing?.message as any)?.key ?? {}),
                             id: targetKey.id,
                             remoteJid: targetKey.remoteJid,
                           },
@@ -589,17 +589,16 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
 
             // Simple log: Pesan Baru
             {
-              const _phone = (
-                msg.key.participantAlt ||
-                msg.key.participant ||
-                msg.key.remoteJid ||
-                ''
-              )
-                .split('@')[0]
-                .split(':')[0];
+              const _rawPhone =
+                msg.key?.participantAlt ||
+                msg.key?.participant ||
+                msg.key?.remoteJid ||
+                '';
+              const _parts = _rawPhone.split('@');
+              const _phone = (_parts[0] ?? '').split(':')[0];
               const _text =
                 extractText(msg as never) ||
-                Object.keys(msg.message ?? {})[0] ||
+                Object.keys((msg as any).message ?? {})[0] ||
                 '';
               const _jam = new Date().toLocaleTimeString('id-ID', {
                 hour: '2-digit',
@@ -1202,7 +1201,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
     options: MiscMessageGenerationOptions | undefined = undefined,
     sendPresence: boolean = false,
     attribution?: { sentBy: string; senderName: string },
-  ): Promise<void> {
+  ): Promise<any> {
     let pending: {
       jid: string;
       msgId: string | null;
@@ -1273,8 +1272,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
       let lastError: Error | null = null;
       for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
         try {
-          await send();
-          return;
+          return await send();
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
           void logEvent(
@@ -1312,6 +1310,6 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
       throw new Error(`Send queue full (${MAX_QUEUED}), try again later`);
     }
 
-    await this.messageQueue.add(sendWithRetry);
+    return await this.messageQueue.add(sendWithRetry);
   }
 }
