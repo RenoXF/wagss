@@ -44,12 +44,15 @@ echo ""
 echo "[2/6] Installing Bun..."
 if ! command -v bun &> /dev/null; then
   curl -fsSL https://bun.sh/install | bash
-  export PATH="$HOME/.bun/bin:$PATH"
-  echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/profile.d/bun.sh
+  BUN_BIN=$(which bun)
+  ln -sf ${BUN_BIN} /usr/local/bin/bun
   echo "  Installed: $(bun --version)"
 else
+  BUN_BIN=$(which bun)
+  ln -sf ${BUN_BIN} /usr/local/bin/bun
   echo "  Already installed: $(bun --version)"
 fi
+echo "  Binary: ${BUN_BIN} -> /usr/local/bin/bun"
 
 # ── 3. Install LibreOffice ──
 echo ""
@@ -70,27 +73,29 @@ chown -R ${APP_USER}:${APP_USER} /home/${APP_USER}
 # ── 5. Install Dependencies ──
 echo ""
 echo "[5/6] Installing dependencies..."
-su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && cd ${APP_DIR} && bun install"
+su - ${APP_USER} -c "cd ${APP_DIR} && bun install"
 
 # ── 6. Setup PM2 ──
 echo ""
 echo "[6/6] Setting up PM2..."
-if ! su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && command -v pm2" &> /dev/null; then
+if ! command -v pm2 &> /dev/null; then
   echo "  Installing PM2..."
-  su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && npm install -g pm2"
+  npm install -g pm2
 else
-  echo "  PM2 already installed: $(su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && pm2 -v")"
+  echo "  PM2 already installed: $(pm2 -v)"
 fi
 
 # Stop if already running
-su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && pm2 delete wagss 2>/dev/null || true"
+su - ${APP_USER} -c "pm2 delete wagss 2>/dev/null || true"
 
 # Start app
-su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && cd ${APP_DIR} && pm2 start bun --name wagss -- run src/index.ts"
+su - ${APP_USER} -c "cd ${APP_DIR} && pm2 start /usr/local/bin/bun --name wagss -- run src/index.ts"
 
-# Save & setup auto-start
-su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && pm2 save"
-su - ${APP_USER} -c "export PATH=/home/${APP_USER}/.bun/bin:\$PATH && pm2 startup -u ${APP_USER} --hp /home/${APP_USER}" 2>/dev/null || true
+# Save process list
+su - ${APP_USER} -c "pm2 save"
+
+# Setup auto-start on boot (needs root to write init script)
+pm2 startup -u ${APP_USER} --hp /home/${APP_USER} || true
 
 chown -R ${APP_USER}:${APP_USER} /home/${APP_USER}
 
