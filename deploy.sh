@@ -51,7 +51,8 @@ if [ -z "${BUN_BIN}" ]; then
   echo "  Error: bun not found after install"
   exit 1
 fi
-ln -sf "${BUN_BIN}" /usr/local/bin/bun
+cp "${BUN_BIN}" /usr/local/bin/bun
+chmod 755 /usr/local/bin/bun
 echo "  Binary: ${BUN_BIN} -> /usr/local/bin/bun"
 echo "  Version: $(/usr/local/bin/bun --version)"
 
