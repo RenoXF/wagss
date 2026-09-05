@@ -1,0 +1,25 @@
+[Unit]
+Description=WAGSS - WhatsApp Gateway
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=wagss
+Group=wagss
+WorkingDirectory=/opt/wagss
+ExecStart=/home/wagss/.bun/bin/bun run src/index.ts
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/wagss/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wagss /var/lib/wagss /var/log/wagss
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

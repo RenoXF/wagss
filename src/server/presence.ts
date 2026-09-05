@@ -42,7 +42,7 @@ export const presenceRoutes = new Elysia({ prefix: '/presence' })
             type: 'typing',
             data: {
               chatJid: body.jid,
-              username: user?.username ?? 'unknown',
+              username: user?.displayName || (user?.username ?? 'unknown'),
               typing: body.typing,
               presence: presenceToSend,
             },

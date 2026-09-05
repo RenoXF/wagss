@@ -1,5 +1,5 @@
 import { authUser } from '@/auth/middleware';
-import { MEDIA_PATH } from '@/config';
+import { LIBREOFFICE_PATH, MEDIA_PATH } from '@/config';
 import { SessionHolder } from '@/whatsapp';
 import { downloadMedia } from '@/whatsapp/media-store';
 import {
@@ -34,26 +34,29 @@ async function convertToPdf(
   srcPath: string,
   messageId: string,
 ): Promise<string | null> {
+  // Sanitize messageId to prevent path traversal
+  const safeId = messageId.replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeId) return null;
   const convertedDir = join(MEDIA_PATH, 'converted');
   if (!existsSync(convertedDir)) {
     await mkdir(convertedDir, { recursive: true });
   }
-  const outPdf = join(convertedDir, `${messageId}.pdf`);
+  const outPdf = join(convertedDir, `${safeId}.pdf`);
   if (existsSync(outPdf)) return outPdf;
   const absSrc = srcPath.startsWith('/')
     ? srcPath
     : join(process.cwd(), srcPath);
   const absOut = join(process.cwd(), convertedDir);
-  // Copy source with messageId name so LibreOffice outputs messageId.pdf
+  // Copy source with safeId name so LibreOffice outputs safeId.pdf
   const srcExt = extname(absSrc) || '.bin';
-  const tmpSrc = join(absOut, `${messageId}${srcExt}`);
+  const tmpSrc = join(absOut, `${safeId}${srcExt}`);
   try {
     await new Promise<void>((resolve, reject) => {
       copyFile(absSrc, tmpSrc, (err) => (err ? reject(err) : resolve()));
     });
     const proc = Bun.spawn(
       [
-        '/snap/bin/libreoffice',
+        LIBREOFFICE_PATH,
         '--headless',
         '--convert-to',
         'pdf',

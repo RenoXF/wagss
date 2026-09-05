@@ -24,6 +24,10 @@ export const DEFAULT_DISPLAY_NAME = Bun.env.DEFAULT_DISPLAY_NAME || 'root';
 export const MAX_RECONNECT_DELAY_MS = Bun.env.RECONNECT_MAX_MS
   ? Number(Bun.env.RECONNECT_MAX_MS)
   : 30_000;
+export const LIBREOFFICE_PATH =
+  Bun.env.LIBREOFFICE_PATH || '/snap/bin/libreoffice';
+export const AUTO_SEED = Bun.env.AUTO_SEED === 'true';
+export const DEFAULT_USERS = Bun.env.DEFAULT_USERS || '';
 
 /**
  * Postgres connection target, Laravel-style env vars:

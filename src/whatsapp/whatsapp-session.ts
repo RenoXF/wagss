@@ -341,7 +341,9 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                         };
                       }
                     }
-                  } catch {}
+                  } catch (e) {
+                    this.logger.debug({ e }, 'E2EE decrypt failed');
+                  }
                   {
                     const _phone = (
                       msg.key.participantAlt ||
@@ -357,8 +359,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                       minute: '2-digit',
                       hour12: false,
                     });
-                    // eslint-disable-next-line no-console
-                    console.log(
+                    this.logger.info(
                       `Pesan Edit : ${_phone} : ${originalText} : ${newEditedText} - ${_jam}`,
                     );
                   }
@@ -390,7 +391,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                     }),
                   );
                 } catch (e) {
-                  console.log('[EDIT E2EE] failed', e);
+                  this.logger.error({ e }, '[EDIT E2EE] failed');
                 }
               }
               continue;
@@ -428,7 +429,9 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                     const { getMessage: _gm } = await import('./message-store');
                     const _ex = await _gm(`${targetJid}-${targetId}`);
                     _hapusOrig = _ex?.message_text || '';
-                  } catch {}
+                  } catch (e) {
+                    this.logger.debug({ e }, 'get original text failed');
+                  }
                   try {
                     await markMessageDeleted(targetJid, targetId);
                     WhatsAppSession.emitToSse(
@@ -437,7 +440,9 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                         data: { chatJid: targetJid, messageId: targetId },
                       }),
                     );
-                  } catch {}
+                  } catch (e) {
+                    this.logger.debug({ e }, 'mark deleted failed');
+                  }
                   {
                     const _phone = (
                       msg.key.participantAlt ||
@@ -452,9 +457,8 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                       minute: '2-digit',
                       hour12: false,
                     });
-                    // eslint-disable-next-line no-console
-                    console.log(
-                      `Pesan Hapus : ${_phone} : ${_hapusOrig} : di hapus - ${_jam}`,
+                    this.logger.info(
+                      `Pesan Hapus : ${_phone} : dihapus - ${_jam}`,
                     );
                   }
                 } else if (pm.type === 14 && pm.editedMessage) {
@@ -482,7 +486,12 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                       `${targetJid}-${targetId}`,
                     );
                     if (existing) originalText = existing.message_text || '';
-                  } catch {}
+                  } catch (e) {
+                    this.logger.debug(
+                      { e },
+                      'get original text for edit failed',
+                    );
+                  }
                   await updateMessageEdited(targetJid, targetId, edited).catch(
                     () => {},
                   );
@@ -512,8 +521,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                       minute: '2-digit',
                       hour12: false,
                     });
-                    // eslint-disable-next-line no-console
-                    console.log(
+                    this.logger.info(
                       `Pesan Edit : ${_phone} : ${originalText} : ${newEditedText} - ${_jam}`,
                     );
                   }
@@ -605,8 +613,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                 minute: '2-digit',
                 hour12: false,
               });
-              // eslint-disable-next-line no-console
-              console.log(`Pesan Baru ${_phone} : ${_text} - ${_jam}`);
+              this.logger.info(`Pesan Baru ${_phone} : ${_text} - ${_jam}`);
             }
 
             // Auto-download media honoring AUTO_DOWNLOAD_ALL / STICKER flags (without size limit)
@@ -661,6 +668,9 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                   lid?: string;
                 },
               ).catch(() => {});
+              WhatsAppSession.emitToSse(
+                JSON.stringify({ type: 'contact', data: { jid: c.id } }),
+              );
             }
           }
         });
@@ -701,6 +711,11 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
         const labelNames = new Map<string, string>();
         sock.ev.on('labels.edit', (label) => {
           if (label?.id && label?.name) {
+            // Evict oldest entries if map exceeds 500
+            if (labelNames.size > 500) {
+              const first = labelNames.keys().next().value;
+              if (first) labelNames.delete(first);
+            }
             labelNames.set(String(label.id), label.name);
           }
         });
@@ -725,17 +740,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
             const editedDirect = (u.update as any)?.message?.editedMessage;
             const anyMsg = (u.update as any)?.message;
             if (protoMsg || editedDirect || anyMsg) {
-              console.log('--- update.message deteksi ---');
-              console.dir(anyMsg, { depth: null, colors: true });
-              console.log('key:', u.key);
-              if (protoMsg?.type === 14 || protoMsg?.type === 'MESSAGE_EDIT') {
-                console.log(
-                  'type 14 MESSAGE_EDIT, target:',
-                  protoMsg.key,
-                  'editedMessage:',
-                  protoMsg.editedMessage,
-                );
-              }
+              this.logger.debug({ key: u.key }, 'messages.update deteksi');
             }
             // TODO Phase2: if protoMsg?.type===14 -> extractText({message: editedMessage}) + DB + SSE
 
@@ -767,7 +772,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           }
         });
 
-        sock.ev.on('message-receipt.update', (updates) => {
+        sock.ev.on('message-receipt.update', async (updates) => {
           for (const u of updates) {
             const receipt = u.receipt as unknown as {
               type?: string;
@@ -780,6 +785,17 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                 : receipt?.type === 'delivery'
                   ? 'delivered'
                   : (receipt?.type ?? 'sent');
+            // If our outgoing message was read by remote, mark incoming messages as read
+            if (receipt?.type === 'read' && u.key?.remoteJid) {
+              const { markChatRead: mcr } = await import('./message-store');
+              mcr(u.key.remoteJid).catch(() => {});
+              WhatsAppSession.emitToSse(
+                JSON.stringify({
+                  type: 'chat_read',
+                  data: { jid: u.key.remoteJid, readBy: null, whatsapp: false },
+                }),
+              );
+            }
             WhatsAppSession.emitToSse(
               JSON.stringify({
                 type: 'message_status',
@@ -912,7 +928,9 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                   if (i + 3 < mediaMessages.length) await Bun.sleep(100);
                 }
               }
-            } catch {}
+            } catch (e) {
+              this.logger.debug({ e }, 'history sync chunk failed');
+            }
             WhatsAppSession.emitToSse(
               JSON.stringify({ type: 'history_done', data: null }),
             );
@@ -1171,9 +1189,17 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
 
   async destroy(): Promise<void> {
     await this.disconnect();
+    (this.logger as any).closeLog?.();
   }
 
   private cleanup(_fullCleanup: boolean = false): void {
+    if (this.socket) {
+      try {
+        this.socket.end(undefined);
+      } catch (e) {
+        this.logger.debug({ e }, 'socket end failed');
+      }
+    }
     this.socket = null;
     this.isLoggedIn = false;
     this.qrCode = null;

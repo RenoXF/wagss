@@ -110,8 +110,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
           }
           const passwordHash = await hashPassword(body.password);
           await sql`
-            INSERT INTO users (username, password_hash, display_name, created_by)
-            VALUES (${body.username}, ${passwordHash}, ${body.displayName}, ${user?.username ?? null})
+            INSERT INTO users (username, password_hash, display_name, created_by, protected)
+            VALUES (${body.username}, ${passwordHash}, ${body.displayName}, ${user?.username ?? null}, false)
           `;
           void logEvent(
             'auth',

@@ -577,4 +577,183 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
       return { success: true, data: await listChatReactions(params.chatJid) };
     },
     { params: t.Object({ chatJid: t.String({ minLength: 1 }) }) },
+  )
+  .post(
+    '/send-location',
+    async ({ body, set }) => {
+      try {
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (!socket) throw new Error('Session not connected');
+        await socket.sendMessage(body.recipient, {
+          location: {
+            degreesLatitude: body.lat,
+            degreesLongitude: body.lng,
+            name: body.name || undefined,
+            address: body.address || undefined,
+          },
+        });
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        recipient: t.String({ minLength: 1 }),
+        lat: t.Number(),
+        lng: t.Number(),
+        name: t.Optional(t.String()),
+        address: t.Optional(t.String()),
+      }),
+    },
+  )
+  .post(
+    '/send-contact',
+    async ({ body, set }) => {
+      try {
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (!socket) throw new Error('Session not connected');
+        const vcard = [
+          'BEGIN:VCARD',
+          'VERSION:3.0',
+          `FN:${body.name}`,
+          `TEL;TYPE=CELL:${body.phone}`,
+          'END:VCARD',
+        ].join('\n');
+        await socket.sendMessage(body.recipient, {
+          contacts: { displayName: body.name, contacts: [{ vcard }] },
+        });
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        recipient: t.String({ minLength: 1 }),
+        name: t.String({ minLength: 1 }),
+        phone: t.String({ minLength: 1 }),
+      }),
+    },
+  )
+  .post(
+    '/send-poll',
+    async ({ body, set }) => {
+      try {
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (!socket) throw new Error('Session not connected');
+        if (body.values.length < 2 || body.values.length > 12) {
+          throw new Error('Poll must have 2-12 options');
+        }
+        await socket.sendMessage(body.recipient, {
+          poll: {
+            name: body.question,
+            values: body.values,
+            selectableCount: body.multiple ? body.values.length : 1,
+          },
+        });
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        recipient: t.String({ minLength: 1 }),
+        question: t.String({ minLength: 1 }),
+        values: t.Array(t.String({ minLength: 1 }), {
+          minItems: 2,
+          maxItems: 12,
+        }),
+        multiple: t.Optional(t.Boolean()),
+      }),
+    },
+  )
+  .post(
+    '/send-reaction',
+    async ({ body, set }) => {
+      try {
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (!socket) throw new Error('Session not connected');
+        await socket.sendMessage(body.recipient, {
+          react: {
+            text: body.emoji,
+            key: {
+              id: body.messageId,
+              remoteJid: body.recipient,
+              fromMe: false,
+            },
+          },
+        });
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        recipient: t.String({ minLength: 1 }),
+        messageId: t.String({ minLength: 1 }),
+        emoji: t.String({ minLength: 1 }),
+      }),
+    },
+  )
+  .delete(
+    '/:chatJid/:messageId',
+    async ({ params, set }) => {
+      try {
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (!socket) throw new Error('Session not connected');
+        await socket.sendMessage(params.chatJid, {
+          delete: {
+            remoteJid: params.chatJid,
+            fromMe: true,
+            id: params.messageId,
+          },
+        });
+        const { markMessageDeleted } = await import('@/whatsapp/message-store');
+        await markMessageDeleted(params.chatJid, params.messageId);
+        const { WhatsAppSession } = await import('@/whatsapp');
+        WhatsAppSession.emitToSse(
+          JSON.stringify({
+            type: 'message_deleted',
+            data: { chatJid: params.chatJid, messageId: params.messageId },
+          }),
+        );
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      params: t.Object({
+        chatJid: t.String({ minLength: 1 }),
+        messageId: t.String({ minLength: 1 }),
+      }),
+    },
   );

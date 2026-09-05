@@ -24,11 +24,7 @@ console.warn = (...args: unknown[]) => {
 import './shutdown';
 
 import { hashPassword } from './auth/password';
-import {
-  DEFAULT_DISPLAY_NAME,
-  DEFAULT_PASSWORD,
-  DEFAULT_USERNAME,
-} from './config';
+import { DEFAULT_USERS } from './config';
 import { dbReady, sql } from './db/client';
 import { migrate } from './db/migrate';
 import { logger } from './logger';
@@ -45,23 +41,32 @@ if (!ready) {
   process.exit(1);
 }
 
-// Auto-seed default user if users table is empty (after dbReady)
-if (DEFAULT_USERNAME && DEFAULT_PASSWORD) {
+// Auto-seed default users if users table is empty and DEFAULT_USERS env var is set
+// Passwords are NEVER hardcoded in source — always read from environment
+if (DEFAULT_USERS) {
   const count = await sql<{ c: number }[]>`
     SELECT count(*)::int AS c FROM users
   `;
   if (Number(count[0]?.c ?? 0) === 0) {
-    if (DEFAULT_PASSWORD === 'password' && Bun.env.NODE_ENV === 'production') {
-      logger.warn(
-        'DEFAULT_PASSWORD is still "password" in production — change it immediately',
-      );
+    try {
+      const users = JSON.parse(DEFAULT_USERS) as {
+        username: string;
+        password: string;
+        displayName: string;
+      }[];
+      for (const u of users) {
+        if (!u.username || !u.password) continue;
+        const hash = await hashPassword(u.password);
+        await sql`
+          INSERT INTO users (username, password_hash, display_name, role, protected)
+          VALUES (${u.username}, ${hash}, ${u.displayName || u.username}, 'admin', true)
+          ON CONFLICT (username) DO NOTHING
+        `;
+        logger.info(`Auto-seeded user: ${u.username} (admin, protected)`);
+      }
+    } catch (e) {
+      logger.error({ e }, 'Failed to parse DEFAULT_USERS env var');
     }
-    const hash = await hashPassword(DEFAULT_PASSWORD);
-    await sql`
-      INSERT INTO users (username, password_hash, display_name, role)
-      VALUES (${DEFAULT_USERNAME}, ${hash}, ${DEFAULT_DISPLAY_NAME ?? DEFAULT_USERNAME}, 'admin')
-    `;
-    logger.info(`Auto-seeded default user: ${DEFAULT_USERNAME} (admin)`);
   }
 }
 

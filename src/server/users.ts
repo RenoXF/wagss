@@ -9,6 +9,7 @@ interface UserRow {
   display_name: string;
   is_active: boolean;
   role: string;
+  protected: boolean;
   created_by: string | null;
   created_at: Date;
 }
@@ -25,7 +26,7 @@ export const usersRoutes = new Elysia({ prefix: '/users' })
   })
   .get('/', async () => {
     const users = await sql<UserRow[]>`
-      SELECT id, username, display_name, is_active, role, created_by, created_at
+      SELECT id, username, display_name, is_active, role, protected, created_by, created_at
       FROM users ORDER BY id ASC
     `;
     return { success: true, data: users };
@@ -37,17 +38,30 @@ export const usersRoutes = new Elysia({ prefix: '/users' })
         set.status = 403;
         return { success: false, message: 'Forbidden: admin only' };
       }
-      // Prevent deactivating last admin
+      // Block editing protected users
+      const protectedUser = await sql<{ protected: boolean }[]>`
+        SELECT protected FROM users WHERE id = ${params.id} LIMIT 1
+      `;
+      if (protectedUser[0]?.protected) {
+        set.status = 403;
+        return { success: false, message: 'Cannot edit protected user' };
+      }
+      // Admin cannot deactivate themselves
+      if (body.isActive === false && user.userId === params.id) {
+        set.status = 400;
+        return { success: false, message: 'Cannot deactivate yourself' };
+      }
+      // Prevent deactivating last admin (atomic check)
       if (body.isActive === false || body.role === 'user') {
-        const admins = await sql<{ count: string }[]>`
-          SELECT COUNT(*)::text as count FROM users WHERE role = 'admin' AND is_active = true
-        `;
-        const adminCount = Number(admins[0]?.count ?? 0);
         const target = await sql<UserRow[]>`
           SELECT role, is_active FROM users WHERE id = ${params.id} LIMIT 1
         `;
         if (target[0]?.role === 'admin' && target[0]?.is_active) {
-          if (adminCount <= 1) {
+          const admins = await sql<{ count: string }[]>`
+            SELECT COUNT(*)::text as count FROM users WHERE role = 'admin' AND is_active = true AND id != ${params.id}
+          `;
+          const remaining = Number(admins[0]?.count ?? 0);
+          if (remaining < 1) {
             set.status = 400;
             return { success: false, message: 'Cannot deactivate last admin' };
           }
@@ -92,6 +106,14 @@ export const usersRoutes = new Elysia({ prefix: '/users' })
       if (user && params.id === user.userId) {
         set.status = 400;
         return { success: false, message: 'Cannot delete yourself' };
+      }
+      // Block deleting protected users
+      const protectedUser = await sql<{ protected: boolean }[]>`
+        SELECT protected FROM users WHERE id = ${params.id} LIMIT 1
+      `;
+      if (protectedUser[0]?.protected) {
+        set.status = 403;
+        return { success: false, message: 'Cannot delete protected user' };
       }
       const res = await sql`DELETE FROM users WHERE id = ${params.id}`;
       if (res.count === 0) {

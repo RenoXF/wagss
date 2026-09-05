@@ -77,7 +77,11 @@ export const contactRoutes = new Elysia({ prefix: '/contacts' })
           hostname.startsWith('192.168.') ||
           /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
           hostname === '169.254.169.254' ||
-          hostname.endsWith('.internal');
+          hostname.endsWith('.internal') ||
+          hostname.startsWith('fc') ||
+          hostname.startsWith('fd') ||
+          hostname.startsWith('fe80') ||
+          hostname.startsWith('::ffff:');
         if (isPrivate) {
           set.status = 403;
           return { success: false, message: 'Avatar host not allowed' };

@@ -71,11 +71,10 @@ if (import.meta.main) {
     secret,
     '75935709679712@lid',
   );
-  console.log('lid:', r1);
   const r2 = decryptEditedMessage(
     secEnc as never,
     secret,
     '6285163063603@s.whatsapp.net',
   );
-  console.log('pn:', r2);
+  console.log('decrypt test:', r1 ? 'OK' : 'FAIL', r2 ? 'OK' : 'FAIL');
 }

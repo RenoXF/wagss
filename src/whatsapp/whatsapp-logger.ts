@@ -7,7 +7,9 @@ import { createStream } from 'rotating-file-stream';
  * @param sessionId Session identifier
  * @returns Pino logger instance configured with rotating file stream
  */
-export function createWhatsAppLogger(sessionId: string): P.Logger {
+export function createWhatsAppLogger(
+  sessionId: string,
+): P.Logger & { closeLog?: () => void } {
   const logDir = path.join(process.cwd(), 'logs', sessionId);
 
   // Create rotating stream that rotates daily
@@ -24,7 +26,7 @@ export function createWhatsAppLogger(sessionId: string): P.Logger {
       base: { sessionId },
     },
     stream,
-  ) as P.Logger & { warn: P.Logger['warn'] };
+  ) as P.Logger & { warn: P.Logger['warn']; closeLog?: () => void };
   // Downgrade noisy Baileys warning to debug (spam on every open)
   const origWarn = logger.warn.bind(logger);
   (logger as unknown as { warn: (...args: unknown[]) => void }).warn = (
@@ -38,6 +40,11 @@ export function createWhatsAppLogger(sessionId: string): P.Logger {
           : '';
     if (msg.includes('no name present, ignoring presence update')) return;
     return (origWarn as (...a: unknown[]) => void)(...args);
+  };
+  logger.closeLog = () => {
+    try {
+      stream.end();
+    } catch {}
   };
   return logger;
 }
