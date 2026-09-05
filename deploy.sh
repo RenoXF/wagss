@@ -56,7 +56,7 @@ DB_NAME=${DB_NAME:-whatsapp}
 echo ""
 echo "[1/7] Installing system dependencies..."
 apt-get update -qq
-apt-get install -y -qq curl git build-essential libpq-dev ca-certificates locales sudo postgresql-client
+apt-get install -y -qq curl git build-essential libpq-dev ca-certificates locales postgresql-client
 
 # Ensure UTF-8 locale
 if ! grep -q "en_US.UTF-8" /etc/locale.gen 2>/dev/null; then
@@ -92,13 +92,16 @@ fi
 mkdir -p ${MEDIA_DIR}/images ${MEDIA_DIR}/videos ${MEDIA_DIR}/audios ${MEDIA_DIR}/documents ${MEDIA_DIR}/stickers ${MEDIA_DIR}/converted ${LOG_DIR}
 chown -R ${APP_USER}:${APP_USER} /home/${APP_USER}/${APP_NAME}
 
-# ── 5. Clone Repository ──
+# ── 5. Setup Repository ──
 echo ""
-echo "[5/7] Cloning repository..."
+echo "[5/7] Setting up repository..."
 if [ -d "${APP_DIR}" ]; then
-  echo "  Updating existing installation..."
+  echo "  Using existing directory: ${APP_DIR}"
   cd ${APP_DIR}
-  sudo -u ${APP_USER} git pull
+  # Only pull if it's a git repo
+  if [ -d ".git" ]; then
+    su - ${APP_USER} -c "cd ${APP_DIR} && git pull"
+  fi
 else
   sudo -u ${APP_USER} git clone https://github.com/RenoXF/wagss.git ${APP_DIR}
   cd ${APP_DIR}
