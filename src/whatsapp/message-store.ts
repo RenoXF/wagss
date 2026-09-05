@@ -29,12 +29,26 @@ export type Row = {
   media_type: string | null;
   media_mime_type: string | null;
   device: string | null;
+  starred: boolean;
+  original_text: string | null;
+  original_message: unknown;
+  edited_at: number | null;
+  original_message_id: string | null;
 };
 
 /** Extract a normalized text payload from a Baileys proto message. */
 export function extractText(msg: any): string {
   const m = msg?.message;
-  if (!m) return '';
+  if (!m) {
+    // Handle stub/system messages (e.g., old counter, decryption failure)
+    if (msg?.messageStubType != null) {
+      const p = msg?.messageStubParameters?.[0] as string | undefined;
+      if (p?.includes('old counter')) return '🔒 Pesan terenkripsi';
+      if (p) return p;
+      return '🔒 Pesan sistem';
+    }
+    return '';
+  }
   if (m.conversation) return m.conversation;
   if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
   if (m.imageMessage?.caption) return m.imageMessage.caption || '';
@@ -42,6 +56,12 @@ export function extractText(msg: any): string {
   if (m.documentMessage?.caption) return m.documentMessage.caption || '';
   if (m.ephemeralMessage?.message)
     return extractText(m.ephemeralMessage.message);
+  if (m.messageStubType != null) {
+    const p = (m as any).messageStubParameters?.[0] as string | undefined;
+    if (p?.includes('old counter')) return '🔒 Pesan terenkripsi';
+    if (p) return p;
+    return '🔒 Pesan sistem';
+  }
   return '';
 }
 
@@ -51,7 +71,8 @@ export function detectDevice(id: string): string {
   if (/^3A.{18}$/.test(id)) return 'ios';
   if (/^3E.{20}$/.test(id)) return 'web';
   if (/^(.{21}|.{32})$/.test(id)) return 'android';
-  if (/^(3F|.{18}$)/.test(id)) return 'desktop';
+  if (/^3F.{18}$/.test(id)) return 'desktop';
+  if (/^.{18}$/.test(id)) return 'desktop';
   return 'unknown';
 }
 
@@ -67,7 +88,12 @@ export type MediaMeta = {
 
 /** Pull media metadata (type, mime, size, dims) off a Baileys message. */
 export function extractMediaMeta(msg: any): MediaMeta {
-  const m = msg?.message;
+  let m: any = msg?.message;
+  if (m?.ephemeralMessage?.message) m = m.ephemeralMessage.message;
+  if (m?.viewOnceMessage?.message) m = m.viewOnceMessage.message;
+  if (m?.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
+  if (m?.documentWithCaptionMessage?.message)
+    m = m.documentWithCaptionMessage.message;
   const patch: MediaMeta = {
     media_type: null,
     media_mime_type: null,
@@ -116,13 +142,34 @@ export function extractMediaMeta(msg: any): MediaMeta {
   for (const type of Object.keys(pick)) {
     if (m[type]) (pick[type] as (v: any) => void)(m[type]);
   }
+  const orig = msg?.message;
+  if (
+    orig?.viewOnceMessage ||
+    orig?.viewOnceMessageV2 ||
+    orig?.ephemeralMessage?.message?.viewOnceMessage ||
+    orig?.ephemeralMessage?.message?.viewOnceMessageV2
+  )
+    patch.view_once = true;
   return patch;
 }
 
 /** Extract full message metadata for storage columns. */
 export function extractMessageMeta(msg: any) {
   const message_type = Object.keys(msg?.message ?? {})[0] ?? null;
-  const quoted = msg?.message?.extendedTextMessage?.contextInfo;
+  let mm: any = msg?.message;
+  if (mm?.ephemeralMessage?.message) mm = mm.ephemeralMessage.message;
+  if (mm?.viewOnceMessage?.message) mm = mm.viewOnceMessage.message;
+  if (mm?.viewOnceMessageV2?.message) mm = mm.viewOnceMessageV2.message;
+  if (mm?.documentWithCaptionMessage?.message)
+    mm = mm.documentWithCaptionMessage.message;
+  const quoted =
+    msg?.message?.extendedTextMessage?.contextInfo ??
+    mm?.imageMessage?.contextInfo ??
+    mm?.videoMessage?.contextInfo ??
+    mm?.audioMessage?.contextInfo ??
+    mm?.documentMessage?.contextInfo ??
+    mm?.stickerMessage?.contextInfo ??
+    null;
   return {
     message_type: message_type?.replace('Message', '') ?? null,
     message_text: extractText(msg) || null,
@@ -151,12 +198,13 @@ export async function upsertMessage(
     VALUES (
       ${storeId}, ${msg.key.remoteJid}, ${!!msg.key.fromMe},
       ${senderJid ?? null}, ${meta.senderName ?? null}, ${meta.sentByUser ?? null},
-      ${serialized}::jsonb, ${Number(msg.messageTimestamp ?? Date.now()) * 1000},
+      ${serialized}::jsonb, ${msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()},
       ${m.message_type}, ${m.message_text ?? null}, ${m.device}, ${m.forwarded ?? false}, ${m.quoted_message_id},
       ${m.media_type}, ${m.media_mime_type ?? null}, ${m.media_size}, ${m.media_duration}, ${m.media_width}, ${m.media_height}, ${m.view_once ?? false}
     )
     ON CONFLICT (id) DO UPDATE SET
-      message = excluded.message,
+      message = CASE WHEN messages.edited_at IS NOT NULL THEN messages.message ELSE excluded.message END,
+      message_text = CASE WHEN messages.edited_at IS NOT NULL THEN messages.message_text ELSE excluded.message_text END,
       sender_name = COALESCE(excluded.sender_name, messages.sender_name),
       sent_by_user = COALESCE(excluded.sent_by_user, messages.sent_by_user)
   `;
@@ -193,9 +241,12 @@ export async function updateMessageEdited(
   const m = extractMessageMeta(newMsg);
   await sql`
     UPDATE messages SET
+      deleted = false,
+      original_text = COALESCE(original_text, message_text),
+      original_message = COALESCE(original_message, message),
       message = ${serialized}::jsonb,
       message_text = ${m.message_text},
-      edited_at = ${Number(newMsg.messageTimestamp ?? Date.now()) * 1000},
+      edited_at = ${newMsg.messageTimestamp ? Number(newMsg.messageTimestamp) * 1000 : Date.now()},
       original_message_id = ${targetMessageId}
     WHERE id = ${msgId(chatJid, targetMessageId)}
   `;
@@ -221,7 +272,7 @@ export async function listMessages(
   const rows = await sql<Row[]>`
     SELECT * FROM messages
     WHERE chat_jid = ${chatJid}
-    ORDER BY timestamp DESC, id DESC
+    ORDER BY timestamp DESC, created_at DESC, id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
   return rows.map((row) => {
@@ -244,9 +295,9 @@ export async function listChatJids(limit = 200): Promise<ChatSummary[]> {
     SELECT m.chat_jid,
            count(*) AS count,
            max(m.timestamp) AS last_ts,
-           (SELECT message FROM messages m2
-            WHERE m2.chat_jid = m.chat_jid
-            ORDER BY m2.timestamp DESC, m2.id DESC LIMIT 1) AS last_message
+            (SELECT message FROM messages m2
+             WHERE m2.chat_jid = m.chat_jid
+             ORDER BY m2.timestamp DESC, m2.created_at DESC, m2.id DESC LIMIT 1) AS last_message
     FROM messages m
     GROUP BY m.chat_jid
     ORDER BY last_ts DESC
@@ -278,4 +329,54 @@ export async function getUnreadCounts(): Promise<
     WHERE from_me = ${false} AND read_at IS NULL
     GROUP BY chat_jid
   `;
+}
+
+/** Full-text-ish search over stored message text (case-insensitive). */
+export async function searchMessages(
+  q: string,
+  offset = 0,
+  limit = 50,
+): Promise<Row[]> {
+  if (!q.trim()) return [];
+  const safe = q
+    .trim()
+    .replaceAll('!', '!!')
+    .replaceAll('%', '!%')
+    .replaceAll('_', '!_');
+  const rows = await sql<Row[]>`
+    SELECT * FROM messages
+    WHERE message_text IS NOT NULL
+      AND lower(message_text) LIKE '%' || lower(${safe}) || '%' ESCAPE '!'
+    ORDER BY timestamp DESC, id DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+  return rows.map((row) => {
+    if (row.message && typeof row.message === 'string') {
+      row.message = JSON.parse(row.message, BufferJSON.reviver as never);
+    }
+    return row;
+  });
+}
+
+/** Star / unstar a message. */
+export async function starMessage(
+  chatJid: string,
+  messageId: string,
+  star: boolean,
+): Promise<void> {
+  await sql`
+    UPDATE messages SET starred = ${star}
+    WHERE id = ${msgId(chatJid, messageId)}
+  `;
+}
+
+/** Check whether a message exists and belongs to us (fromMe). */
+export async function isOwnMessage(
+  chatJid: string,
+  messageId: string,
+): Promise<boolean> {
+  const rows = await sql<{ from_me: boolean }[]>`
+    SELECT from_me FROM messages WHERE id = ${msgId(chatJid, messageId)} LIMIT 1
+  `;
+  return rows.length > 0 && !!rows[0]?.from_me;
 }

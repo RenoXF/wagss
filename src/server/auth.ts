@@ -2,6 +2,7 @@ import { JWT_COOKIE } from '@/auth/jwt';
 import { authUser, cookieHeader, signToken } from '@/auth/middleware';
 import { hashPassword, verifyPassword } from '@/auth/password';
 import { sql } from '@/db/client';
+import { logEvent } from '@/db/log';
 import { Elysia, t } from 'elysia';
 
 interface UserRow {
@@ -10,6 +11,7 @@ interface UserRow {
   display_name: string;
   password_hash: string;
   is_active: boolean;
+  role: string;
 }
 
 const firstUserExists = async (): Promise<boolean> => {
@@ -25,7 +27,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     '/login',
     async ({ body, set }) => {
       const users = await sql<UserRow[]>`
-        SELECT id, username, display_name, password_hash, is_active
+        SELECT id, username, display_name, password_hash, is_active, role
         FROM users WHERE username = ${body.username} LIMIT 1
       `;
       const user = users[0];
@@ -34,6 +36,13 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         !user.is_active ||
         !(await verifyPassword(body.password, user.password_hash))
       ) {
+        void logEvent(
+          'auth',
+          'login',
+          'warn',
+          { username: body.username },
+          'invalid credentials',
+        );
         set.status = 401;
         return { success: false, message: 'Invalid username or password' };
       }
@@ -42,16 +51,24 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         userId: user.id,
         username: user.username,
         displayName: user.display_name,
+        role: user.role ?? 'user',
       };
       const token = await signToken(payload);
       set.headers['set-cookie'] = cookieHeader(JWT_COOKIE, token);
+      void logEvent(
+        'auth',
+        'login',
+        'info',
+        { username: user.username },
+        { userId: user.id },
+      );
 
       return { success: true, data: payload };
     },
     {
       body: t.Object({
-        username: t.String({ minLength: 1 }),
-        password: t.String({ minLength: 1 }),
+        username: t.String({ minLength: 1, maxLength: 50 }),
+        password: t.String({ minLength: 1, maxLength: 128 }),
       }),
     },
   )
@@ -75,6 +92,10 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
             set.status = 401;
             return { success: false, message: 'Unauthorized' };
           }
+          if (user.role !== 'admin') {
+            set.status = 403;
+            return { success: false, message: 'Forbidden: admin only' };
+          }
         },
       })
       .post(
@@ -92,13 +113,20 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
             INSERT INTO users (username, password_hash, display_name, created_by)
             VALUES (${body.username}, ${passwordHash}, ${body.displayName}, ${user?.username ?? null})
           `;
+          void logEvent(
+            'auth',
+            'register',
+            'info',
+            { username: body.username, createdBy: user?.username },
+            null,
+          );
           return { success: true, message: 'User created' };
         },
         {
           body: t.Object({
-            username: t.String({ minLength: 1 }),
-            password: t.String({ minLength: 3 }),
-            displayName: t.String({ minLength: 1 }),
+            username: t.String({ minLength: 1, maxLength: 50 }),
+            password: t.String({ minLength: 8, maxLength: 128 }),
+            displayName: t.String({ minLength: 1, maxLength: 100 }),
           }),
         },
       ),

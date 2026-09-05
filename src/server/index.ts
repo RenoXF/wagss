@@ -1,11 +1,13 @@
 import { authUser } from '@/auth/middleware';
 import { HOSTNAME, PORT, QR_TIMEOUT_MS } from '@/config';
+import { dbReady } from '@/db/client';
 import { logger } from '@/logger';
 import { SessionHolder } from '@/whatsapp';
 import { cors } from '@elysiajs/cors';
 import { file } from 'bun';
 import { Elysia } from 'elysia';
 import { cpus, freemem, hostname, uptime as osUptime, totalmem } from 'node:os';
+import { join } from 'node:path';
 import { version } from 'package.json';
 import icon from '../../assets/icon.ico' with { type: 'file' };
 import { authRoutes } from './auth';
@@ -21,10 +23,14 @@ import { usersRoutes } from './users';
 
 const startTime = Date.now();
 
+const allowedOrigins = (Bun.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const app = new Elysia()
   .use(
     cors({
-      origin: true,
+      origin: allowedOrigins.length > 0 ? allowedOrigins : false,
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
@@ -60,8 +66,54 @@ const app = new Elysia()
     { detail: { hide: true } },
   )
   .get(
+    '/wa-bg.svg',
+    ({ set }) => {
+      set.headers['content-type'] = 'image/svg+xml';
+      set.headers['cache-control'] = 'public, max-age=604800';
+      return file(join(import.meta.dir, 'client', 'wa-bg.svg'));
+    },
+    { detail: { hide: true } },
+  )
+  .get(
+    '/health',
+    async () => {
+      let dbOk = false;
+      try {
+        dbOk = await dbReady();
+      } catch {}
+      return {
+        success: true,
+        data: {
+          status: dbOk ? 'ok' : 'degraded',
+          uptime: Math.floor((Date.now() - startTime) / 1000),
+          version,
+          db: dbOk ? 'ok' : 'down',
+        },
+      };
+    },
+    {
+      detail: {
+        summary: 'Health Check',
+        description:
+          'Anonymous health check for local IP / Docker / K8s probes.',
+      },
+    },
+  )
+  .guard({
+    beforeHandle({ user, set }) {
+      if (!user) {
+        set.status = 401;
+        return { success: false, message: 'Unauthorized' };
+      }
+    },
+  })
+  .get(
     '/system/info',
-    () => {
+    ({ user, set }) => {
+      if (user?.role !== 'admin') {
+        set.status = 403;
+        return { success: false, message: 'Forbidden' };
+      }
       const mem = process.memoryUsage();
       const holder = SessionHolder.getInstance();
       const session = holder.get();

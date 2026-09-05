@@ -5,7 +5,7 @@ import postgres from 'postgres';
 export const sql = postgres(
   getDbConnection() as Parameters<typeof postgres>[0],
   {
-    max: Bun.env.DB_POOLED === 'true' ? 10 : 1,
+    max: Bun.env.DB_POOLED === 'false' ? 1 : 10,
     idle_timeout: 20,
     connect_timeout: 10,
     onnotice: () => {},

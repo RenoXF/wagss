@@ -77,6 +77,17 @@ export async function listMessageStatus(
   `;
 }
 
+export async function listStatusesForChat(
+  chatJid: string,
+): Promise<StatusRow[]> {
+  return sql<StatusRow[]>`
+    SELECT chat_jid, message_id, to_jid, status, ts
+    FROM message_status
+    WHERE chat_jid = ${chatJid}
+    ORDER BY ts ASC
+  `;
+}
+
 /** Latest status per message in a chat (for read ticks). */
 export async function chatStatusSummary(
   chatJid: string,

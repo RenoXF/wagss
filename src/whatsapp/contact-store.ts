@@ -40,13 +40,19 @@ export async function upsertContact(c: {
 }): Promise<void> {
   const jid = c.id;
   if (!jid) return;
+  const isGroup = jid.includes('@g.us');
+  // Also record LID -> PN mapping when the contact carries a LID.
+  if (c.lid && !jid.includes('@lid')) {
+    await saveLidMappings([{ lid: c.lid, pn: jid }]);
+  }
   await sql`
     INSERT INTO contacts (
-      jid, name, notify, avatar_url, img_url, status,
+      jid, name, notify, avatar_url, img_url, status, is_group,
       is_business, is_enterprise, verified_name, verified, in_phone_book, known, push_name, lid
     ) VALUES (
       ${jid}, ${c.name ?? null}, ${c.notify ?? null}, ${c.imgUrl ?? null}, ${c.imgUrl ?? null},
-      ${c.status ?? null}, ${!!c.isBusiness}, ${!!c.isEnterprise}, ${c.verifiedName ?? null},
+      ${c.status ?? null}, ${isGroup},
+      ${!!c.isBusiness}, ${!!c.isEnterprise}, ${c.verifiedName ?? null},
       ${!!c.verified}, ${!!c.inPhoneBook}, ${!!c.known}, ${c.pushName ?? null}, ${c.lid ?? null}
     )
     ON CONFLICT (jid) DO UPDATE SET
@@ -55,6 +61,7 @@ export async function upsertContact(c: {
       avatar_url = COALESCE(excluded.avatar_url, contacts.avatar_url),
       img_url = COALESCE(excluded.img_url, contacts.img_url),
       status = COALESCE(excluded.status, contacts.status),
+      is_group = excluded.is_group,
       is_business = excluded.is_business,
       is_enterprise = excluded.is_enterprise,
       verified_name = COALESCE(excluded.verified_name, contacts.verified_name),
@@ -112,12 +119,14 @@ export async function upsertContactMinimal(
   name?: string | null,
   photoUrl?: string | null,
 ): Promise<void> {
+  const isGroup = jid.includes('@g.us');
   await sql`
-    INSERT INTO contacts (jid, name, avatar_url)
-    VALUES (${jid}, ${name ?? null}, ${photoUrl ?? null})
+    INSERT INTO contacts (jid, name, avatar_url, is_group)
+    VALUES (${jid}, ${name ?? null}, ${photoUrl ?? null}, ${isGroup})
     ON CONFLICT (jid) DO UPDATE SET
       name = COALESCE(excluded.name, contacts.name),
       avatar_url = COALESCE(excluded.avatar_url, contacts.avatar_url),
+      is_group = excluded.is_group,
       updated_at = now()
   `;
 }
@@ -131,4 +140,47 @@ export async function getContact(jid: string): Promise<ContactRow | null> {
 
 export async function listContacts(): Promise<ContactRow[]> {
   return sql<ContactRow[]>`SELECT * FROM contacts ORDER BY name ASC NULLS LAST`;
+}
+
+/** Persist LID <-> phone-number mappings from Baileys history sync. */
+export async function saveLidMappings(
+  mappings: { lid: string; pn: string }[],
+): Promise<void> {
+  for (const m of mappings) {
+    if (!m.lid || !m.pn) continue;
+    await sql`
+      INSERT INTO lid_pn_mapping (lid, pn) VALUES (${m.lid}, ${m.pn})
+      ON CONFLICT (lid) DO UPDATE SET pn = excluded.pn
+    `;
+  }
+}
+
+/** Resolve a LID to its phone number, if known. */
+export async function getPnForLid(lid: string): Promise<string | null> {
+  const rows = await sql<{ pn: string }[]>`
+    SELECT pn FROM lid_pn_mapping WHERE lid = ${lid} LIMIT 1
+  `;
+  return rows[0]?.pn ?? null;
+}
+
+/**
+ * Resolve the best display name for any JID.
+ * - @g.us      -> contacts.name (group subject synced separately)
+ * - @lid       -> map to pn, then use that contact's name
+ * - @s.whatsapp.net -> contact name
+ * Falls back to the numeric part of the jid.
+ */
+export async function resolveDisplayName(jid: string): Promise<string> {
+  if (!jid) return 'Unknown';
+  if (jid.includes('@g.us') || jid.includes('@broadcast')) {
+    const c = await getContact(jid);
+    return c?.name ?? jid.split('@')[0] ?? jid;
+  }
+  let target = jid;
+  if (jid.endsWith('@lid')) {
+    const pn = await getPnForLid(jid);
+    if (pn) target = pn;
+  }
+  const c = await getContact(target);
+  return c?.name ?? c?.notify ?? c?.push_name ?? jid.split('@')[0] ?? jid;
 }

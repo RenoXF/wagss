@@ -27,7 +27,13 @@ export const mediaRoutes = new Elysia({ prefix: '/media' })
         return { success: false, message: 'Message not found' };
       }
 
-      const meta = (row.message as any)?.message;
+      let meta = (row.message as any)?.message;
+      if (meta?.ephemeralMessage?.message) meta = meta.ephemeralMessage.message;
+      if (meta?.viewOnceMessage?.message) meta = meta.viewOnceMessage.message;
+      if (meta?.viewOnceMessageV2?.message)
+        meta = meta.viewOnceMessageV2.message;
+      if (meta?.documentWithCaptionMessage?.message)
+        meta = meta.documentWithCaptionMessage.message;
       const mediaType = ['image', 'video', 'audio', 'document', 'sticker'].find(
         (t) => meta?.[`${t}Message`],
       );

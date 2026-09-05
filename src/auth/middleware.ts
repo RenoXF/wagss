@@ -6,6 +6,7 @@ export interface JwtUser {
   userId: number;
   username: string;
   displayName: string;
+  role: string;
 }
 
 const key = new TextEncoder().encode(JWT_SECRET);
@@ -15,19 +16,35 @@ export async function signToken(user: JwtUser): Promise<string> {
     userId: user.userId,
     username: user.username,
     displayName: user.displayName,
+    role: user.role,
   })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer('wagss')
+    .setAudience('wagss-web')
     .setExpirationTime('7d')
     .sign(key);
 }
 
 export async function verifyToken(token: string): Promise<JwtUser | null> {
   try {
-    const { payload } = await jwtVerify(token, key);
+    const { payload } = await jwtVerify(token, key, {
+      issuer: 'wagss',
+      audience: 'wagss-web',
+    });
     if (
       typeof payload.userId === 'number' &&
       typeof payload.username === 'string'
     ) {
+      // Check user still exists and active
+      try {
+        const { sql } = await import('@/db/client');
+        const rows = await sql<{ is_active: boolean }[]>`
+          SELECT is_active FROM users WHERE id = ${payload.userId} LIMIT 1
+        `;
+        if (!rows[0] || rows[0].is_active === false) return null;
+      } catch {
+        return null;
+      }
       return {
         userId: payload.userId,
         username: payload.username,
@@ -35,6 +52,7 @@ export async function verifyToken(token: string): Promise<JwtUser | null> {
           (typeof payload.displayName === 'string'
             ? payload.displayName
             : null) ?? payload.username,
+        role: typeof payload.role === 'string' ? payload.role : 'user',
       };
     }
   } catch {}
@@ -48,7 +66,13 @@ export function readCookie(headers: Headers, name: string): string | null {
     const idx = part.indexOf('=');
     if (idx === -1) continue;
     const k = part.slice(0, idx).trim();
-    if (k === name) return decodeURIComponent(part.slice(idx + 1).trim());
+    if (k === name) {
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      } catch {
+        return part.slice(idx + 1).trim();
+      }
+    }
   }
   return null;
 }

@@ -4,6 +4,10 @@ import {
   addContactLabel,
   getContact,
   removeContactLabel,
+  resolveDisplayName,
+  saveLidMappings,
+  upsertContact,
+  upsertContactMinimal,
 } from '@/whatsapp/contact-store';
 import { listGroupParticipants, saveGroup } from '@/whatsapp/group-store';
 import {
@@ -13,6 +17,8 @@ import {
   extractText,
   getMessage,
   markMessageDeleted,
+  searchMessages,
+  starMessage,
   updateMessageEdited,
   upsertMessage,
 } from '@/whatsapp/message-store';
@@ -163,6 +169,37 @@ check(
   'message marked deleted',
   !!(del as unknown as { deleted?: boolean }).deleted,
 );
+// deleted message row still intact
+check(
+  'deleted row not removed',
+  !!del && !!(del as unknown as { deleted?: boolean }).deleted,
+);
+
+// star + search
+const searchChat = 'search@s.whatsapp.net';
+const s1 = `s1-${Date.now()}`;
+const s2 = `s2-${Date.now()}`;
+await upsertMessage({
+  key: { id: s1, remoteJid: searchChat, fromMe: true },
+  messageTimestamp: Math.floor(Date.now() / 1000),
+  message: { conversation: 'cari kata unik-xyz' },
+});
+await upsertMessage({
+  key: { id: s2, remoteJid: searchChat, fromMe: false },
+  messageTimestamp: Math.floor(Date.now() / 1000),
+  message: { conversation: 'pesan lain biasa' },
+});
+const found = await searchMessages('unik-xyz');
+check(
+  'search finds message',
+  found.length >= 1 && found[0]!.chat_jid === searchChat,
+);
+await starMessage(searchChat, s1, true);
+const starred = await getMessage(`${searchChat}-${s1}`);
+check('starred true', !!(starred as unknown as { starred?: boolean }).starred);
+await starMessage(searchChat, s1, false);
+const unstarred = await getMessage(`${searchChat}-${s1}`);
+check('unstarred', !(unstarred as unknown as { starred?: boolean }).starred);
 
 // contact labels
 const cjid = 'label@s.whatsapp.net';
@@ -180,9 +217,45 @@ check(
   Array.isArray((c as any)?.labels) && (c as any).labels.length === 1,
 );
 
+// LID mapping + display name resolve
+await saveLidMappings([{ lid: '654321@lid', pn: '654321@s.whatsapp.net' }]);
+await upsertContact({
+  id: '654321@s.whatsapp.net',
+  name: 'Si LID',
+} as { id: string });
+const lidName = await resolveDisplayName('654321@lid');
+check('lid resolves to PN name', lidName === 'Si LID');
+const pnName = await resolveDisplayName('654321@s.whatsapp.net');
+check('pn resolves own name', pnName === 'Si LID');
+
+// is_group fix
+await upsertContactMinimal('120123456789@g.us', 'Grup Tes');
+const g = await getContact('120123456789@g.us');
+check('g.us is_group', !!(g as unknown as { is_group?: boolean }).is_group);
+await upsertContactMinimal('62811111@s.whatsapp.net', 'Org');
+const p = await getContact('62811111@s.whatsapp.net');
+check('pn not group', !(p as unknown as { is_group?: boolean }).is_group);
+
 if (failed > 0) {
   console.error(`${failed} check(s) failed`);
   process.exit(1);
 }
 console.log('ALL CHECKS PASSED');
+
+// Cleanup test rows so they never leak into the real chat list.
+await sql`
+  DELETE FROM messages
+  WHERE chat_jid IN ('search@s.whatsapp.net','edchat@s.whatsapp.net','c2@s.whatsapp.net','chat1@s.whatsapp.net')
+     OR id LIKE 's1-%' OR id LIKE 's2-%' OR id LIKE 'ed-%' OR id LIKE 'st-%'
+     OR id LIKE 'chat1-%'
+`;
+await sql`DELETE FROM message_reactions WHERE message_id LIKE 'chat1-%'`;
+await sql`DELETE FROM message_status WHERE message_id LIKE 'st-%'`;
+await sql`DELETE FROM whatsapp_groups WHERE group_id LIKE 'g-%@g.us'`;
+await sql`DELETE FROM group_participants WHERE group_id LIKE 'g-%@g.us'`;
+await sql`
+  DELETE FROM contacts
+  WHERE jid IN ('label@s.whatsapp.net','a@s.whatsapp.net','b@s.whatsapp.net','654321@s.whatsapp.net','120123456789@g.us','62811111@s.whatsapp.net','search@s.whatsapp.net','edchat@s.whatsapp.net')
+`;
+await sql`DELETE FROM lid_pn_mapping WHERE lid = '654321@lid'`;
 await sql.end();

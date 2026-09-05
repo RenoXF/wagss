@@ -1,4 +1,10 @@
-export { getContact, listContacts, upsertContact } from './contact-store';
+export {
+  getContact,
+  listContacts,
+  resolveDisplayName,
+  saveLidMappings,
+  upsertContact,
+} from './contact-store';
 export { getGroup, listGroupParticipants, listGroups } from './group-store';
 export {
   getMessage,
@@ -6,6 +12,8 @@ export {
   listChatJids,
   listMessages,
   markChatRead,
+  searchMessages,
+  starMessage,
 } from './message-store';
 export { listChatReactions, listReactions } from './reaction-store';
 export { SessionHolder } from './session-holder';

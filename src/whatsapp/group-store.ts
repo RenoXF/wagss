@@ -63,16 +63,18 @@ export async function saveGroup(meta: GroupMeta): Promise<void> {
 
 export async function saveGroupParticipants(meta: GroupMeta): Promise<void> {
   const parts = meta.participants ?? [];
-  await sql`DELETE FROM group_participants WHERE group_id = ${meta.id}`;
-  for (const p of parts) {
-    if (!p.id) continue;
-    await sql`
-      INSERT INTO group_participants (group_id, participant_id, admin_level)
-      VALUES (${meta.id}, ${p.id}, ${p.admin ?? null})
-      ON CONFLICT (group_id, participant_id) DO UPDATE
-        SET admin_level = excluded.admin_level
-    `;
-  }
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM group_participants WHERE group_id = ${meta.id}`;
+    for (const p of parts) {
+      if (!p.id) continue;
+      await tx`
+        INSERT INTO group_participants (group_id, participant_id, admin_level)
+        VALUES (${meta.id}, ${p.id}, ${p.admin ?? null})
+        ON CONFLICT (group_id, participant_id) DO UPDATE
+          SET admin_level = excluded.admin_level
+      `;
+    }
+  });
 }
 
 export async function listGroups(): Promise<Record<string, unknown>[]> {

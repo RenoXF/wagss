@@ -24,8 +24,16 @@ export const presenceRoutes = new Elysia({ prefix: '/presence' })
         return { success: false, message: 'Session not connected' };
       }
       try {
+        const rawPresence = (body as { presence?: string }).presence;
+        const allowed = new Set(['composing', 'paused', 'recording']);
+        let presenceToSend: 'composing' | 'paused' | 'recording';
+        if (rawPresence && allowed.has(rawPresence)) {
+          presenceToSend = rawPresence as 'composing' | 'paused' | 'recording';
+        } else {
+          presenceToSend = body.typing ? 'composing' : 'paused';
+        }
         await socket
-          .sendPresenceUpdate(body.typing ? 'composing' : 'paused', body.jid)
+          .sendPresenceUpdate(presenceToSend, body.jid)
           .catch((err) => console.error('typing presence error:', err));
         // Broadcast to other web operators (UI↔UI).
         const { WhatsAppSession } = await import('@/whatsapp');
@@ -36,6 +44,7 @@ export const presenceRoutes = new Elysia({ prefix: '/presence' })
               chatJid: body.jid,
               username: user?.username ?? 'unknown',
               typing: body.typing,
+              presence: presenceToSend,
             },
           }),
         );
@@ -49,6 +58,13 @@ export const presenceRoutes = new Elysia({ prefix: '/presence' })
       body: t.Object({
         jid: t.String({ minLength: 1 }),
         typing: t.Boolean(),
+        presence: t.Optional(
+          t.Union([
+            t.Literal('composing'),
+            t.Literal('paused'),
+            t.Literal('recording'),
+          ]),
+        ),
       }),
     },
   );

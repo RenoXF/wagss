@@ -4,12 +4,19 @@ import { SessionHolder } from '@/whatsapp';
 import {
   getMessage,
   getUnreadCounts,
+  isOwnMessage,
   listChatJids,
   listMessages,
   markChatRead,
+  searchMessages,
+  starMessage,
 } from '@/whatsapp/message-store';
 import { listChatReactions } from '@/whatsapp/reaction-store';
-import { chatStatusSummary, listMessageStatus } from '@/whatsapp/status-store';
+import {
+  chatStatusSummary,
+  listMessageStatus,
+  listStatusesForChat,
+} from '@/whatsapp/status-store';
 import { isJidGroup, isLidUser, isPnUser } from 'baileys';
 import { Elysia, t } from 'elysia';
 
@@ -68,6 +75,36 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
     }
   })
   .get(
+    '/search',
+    async ({ query, set }) => {
+      try {
+        const q = String(query.q ?? '').trim();
+        if (!q) {
+          return { success: true, data: [] };
+        }
+        const rows = await searchMessages(
+          q,
+          Number(query.offset ?? 0),
+          Number(query.limit ?? 50),
+        );
+        return { success: true, data: rows };
+      } catch (err) {
+        set.status = 500;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : 'Search failed',
+        };
+      }
+    },
+    {
+      query: t.Object({
+        q: t.String({ minLength: 1 }),
+        limit: t.Optional(t.Number({ default: 50, maximum: 200 })),
+        offset: t.Optional(t.Number({ default: 0 })),
+      }),
+    },
+  )
+  .get(
     '/:chatJid',
     async ({ params, query, set }) => {
       try {
@@ -104,8 +141,7 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
           body.recipient,
           { text: body.message },
           undefined,
-          body.sendPresence ?? false,
-          body.delay ?? 60,
+          false,
           user
             ? { sentBy: user.username, senderName: user.displayName }
             : undefined,
@@ -122,9 +158,8 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
     {
       body: t.Object({
         recipient: t.String({ minLength: 1 }),
-        message: t.String({ minLength: 1, maxLength: 4096 }),
+        message: t.String({ minLength: 1, maxLength: 65536 }),
         id: t.Optional(t.Nullable(t.String())),
-        delay: t.Optional(t.Number({ minimum: 0, maximum: 300 })),
         sendPresence: t.Optional(t.Boolean()),
       }),
     },
@@ -149,7 +184,6 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
           },
           undefined,
           false,
-          60,
           user
             ? { sentBy: user.username, senderName: user.displayName }
             : undefined,
@@ -166,7 +200,7 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
     {
       body: t.Object({
         recipient: t.String({ minLength: 1 }),
-        message: t.String({ minLength: 1 }),
+        message: t.String({ minLength: 1, maxLength: 65536 }),
         messageKey: t.String({ minLength: 1 }),
       }),
     },
@@ -175,6 +209,13 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
     '/delete',
     async ({ body, set }) => {
       try {
+        if (!(await isOwnMessage(body.jid, body.messageId))) {
+          set.status = 403;
+          return {
+            success: false,
+            message: 'Only own outgoing messages can be deleted',
+          };
+        }
         const whatsapp = getSession();
         const socket = whatsapp.getSocket();
         if (!socket) {
@@ -202,6 +243,84 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
     },
   )
   .post(
+    '/edit',
+    async ({ body, set }) => {
+      try {
+        if (!(await isOwnMessage(body.jid, body.messageId))) {
+          set.status = 403;
+          return {
+            success: false,
+            message: 'Only own messages can be edited',
+          };
+        }
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (!socket) {
+          set.status = 400;
+          return { success: false, message: 'Session not connected' };
+        }
+        await socket.sendMessage(body.jid, {
+          text: body.message,
+          edit: { id: body.messageId, remoteJid: body.jid, fromMe: true },
+        });
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        jid: t.String({ minLength: 1 }),
+        messageId: t.String({ minLength: 1 }),
+        message: t.String({ minLength: 1, maxLength: 4096 }),
+      }),
+    },
+  )
+  .post(
+    '/star',
+    async ({ body, set }) => {
+      try {
+        await starMessage(body.jid, body.messageId, body.star);
+        const whatsapp = getSession();
+        const socket = whatsapp.getSocket();
+        if (socket) {
+          socket
+            .star(body.jid, [{ id: body.messageId, fromMe: true }], body.star)
+            .catch(() => {});
+        }
+        const { WhatsAppSession } = await import('@/whatsapp');
+        WhatsAppSession.emitToSse(
+          JSON.stringify({
+            type: 'message_starred',
+            data: {
+              chatJid: body.jid,
+              messageId: body.messageId,
+              star: body.star,
+            },
+          }),
+        );
+        return { success: true };
+      } catch (err) {
+        set.status = 400;
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    {
+      body: t.Object({
+        jid: t.String({ minLength: 1 }),
+        messageId: t.String({ minLength: 1 }),
+        star: t.Boolean(),
+      }),
+    },
+  )
+  .post(
     '/forward',
     async ({ body, user, set }) => {
       try {
@@ -217,7 +336,6 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
           { forward: raw.message as any },
           undefined,
           false,
-          60,
           user
             ? { sentBy: user.username, senderName: user.displayName }
             : undefined,
@@ -240,17 +358,54 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
   )
   .post(
     '/read',
-    async ({ body, set }) => {
+    async ({ body, user, set }) => {
       try {
-        const whatsapp = getSession();
-        const ids = await readReceiptIds(body.jid);
         await markChatRead(body.jid);
-        const socket = whatsapp.getSocket();
-        if (socket && ids.length > 0) {
-          socket.sendReceipt(body.jid, undefined, ids, 'read').catch(() => {});
+        const { WhatsAppSession } = await import('@/whatsapp');
+        const { logEvent } = await import('@/db/log');
+        WhatsAppSession.emitToSse(
+          JSON.stringify({
+            type: 'chat_read',
+            data: {
+              jid: body.jid,
+              readBy: user?.username ?? null,
+              whatsapp: !!body.whatsapp,
+            },
+          }),
+        );
+        void logEvent(
+          'api',
+          'read',
+          'info',
+          { jid: body.jid, whatsapp: !!body.whatsapp, by: user?.username },
+          null,
+        );
+        if (body.whatsapp) {
+          const whatsapp = getSession();
+          const ids = await readReceiptIds(body.jid);
+          const socket = whatsapp.getSocket();
+          if (socket && ids.length > 0) {
+            socket.sendReceipt(body.jid, undefined, ids, 'read').catch((e) => {
+              void logEvent(
+                'baileys',
+                'sendReceipt',
+                'error',
+                { jid: body.jid, ids },
+                String(e),
+              );
+            });
+          }
         }
         return { success: true };
       } catch (err) {
+        const { logEvent } = await import('@/db/log');
+        void logEvent(
+          'api',
+          'read',
+          'error',
+          { jid: (body as { jid?: unknown })?.jid },
+          String(err),
+        );
         set.status = 400;
         return {
           success: false,
@@ -259,26 +414,54 @@ export const messageRoutes = new Elysia({ prefix: '/messages' })
       }
     },
     {
-      body: t.Object({ jid: t.String() }),
+      body: t.Object({ jid: t.String(), whatsapp: t.Optional(t.Boolean()) }),
+    },
+  )
+  .get(
+    '/:chatJid/status/:messageId',
+    async ({ params }) => {
+      const data = await listMessageStatus(params.chatJid, params.messageId);
+      return { success: true, data };
+    },
+    {
+      params: t.Object({
+        chatJid: t.String({ minLength: 1 }),
+        messageId: t.String({ minLength: 1 }),
+      }),
+    },
+  )
+  .get(
+    '/:chatJid/:messageId/status',
+    async ({ params }) => {
+      const data = await listMessageStatus(params.chatJid, params.messageId);
+      return { success: true, data };
+    },
+    {
+      params: t.Object({
+        chatJid: t.String({ minLength: 1 }),
+        messageId: t.String({ minLength: 1 }),
+      }),
     },
   )
   .get(
     '/:chatJid/status',
-    async ({ params }) => {
-      const rows = await sql<{ message_id: string }[]>`
-        SELECT DISTINCT message_id FROM message_status
-        WHERE chat_jid = ${params.chatJid}
-      `;
-      const out: Record<string, unknown[]> = {};
+    async ({ params, query }) => {
+      // Per-message on-demand fetch keeps client simple; bulk uses single query
+      if (query?.messageId) {
+        const data = await listMessageStatus(params.chatJid, query.messageId);
+        return { success: true, data };
+      }
+      const rows = await listStatusesForChat(params.chatJid);
+      const out: Record<string, typeof rows> = {};
       for (const r of rows) {
-        out[r.message_id] = await listMessageStatus(
-          params.chatJid,
-          r.message_id,
-        );
+        (out[r.message_id] ??= []).push(r);
       }
       return { success: true, data: out };
     },
-    { params: t.Object({ chatJid: t.String({ minLength: 1 }) }) },
+    {
+      params: t.Object({ chatJid: t.String({ minLength: 1 }) }),
+      query: t.Object({ messageId: t.Optional(t.String({ minLength: 1 })) }),
+    },
   )
   .get(
     '/:chatJid/reactions',

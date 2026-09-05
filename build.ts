@@ -39,7 +39,7 @@ const gitCommit = await $`git rev-parse HEAD`.text();
 
 for (const platform of platforms) {
   const startTime = Date.now();
-  await Bun.build({
+  const result = await Bun.build({
     entrypoints: ['./src/index.ts'],
     outdir: './out',
     compile: platform,
@@ -56,6 +56,10 @@ for (const platform of platforms) {
     },
     plugins: [tailwindPlugin],
   });
+  if (!result.success) {
+    console.error('Build failed:', result.logs);
+    process.exit(1);
+  }
 
   const endTime = Date.now();
   console.log(

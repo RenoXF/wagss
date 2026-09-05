@@ -1,5 +1,11 @@
-import { QR_TIMEOUT_MS } from '@/config';
+import {
+  AUTO_DOWNLOAD_ALL,
+  AUTO_DOWNLOAD_STICKER,
+  MAX_RECONNECT_DELAY_MS,
+  QR_TIMEOUT_MS,
+} from '@/config';
 import { sql } from '@/db/client';
+import { logEvent, logSend } from '@/db/log';
 import { Boom } from '@hapi/boom';
 import {
   DisconnectReason,
@@ -23,6 +29,7 @@ import P from 'pino';
 import {
   addContactLabel,
   removeContactLabel,
+  saveLidMappings,
   upsertContact,
   upsertContactMinimal,
 } from './contact-store';
@@ -40,6 +47,43 @@ import { saveStatus } from './status-store';
 import { validatePhoneNumber } from './validate-phone-number';
 import { createWhatsAppLogger } from './whatsapp-logger';
 
+let cachedBaileysVersion: [number, number, number] | null = null;
+async function getBaileysVersion(): Promise<[number, number, number]> {
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    cachedBaileysVersion = version as [number, number, number];
+    try {
+      await sql`INSERT INTO auth_state (key, value) VALUES ('baileys-version', ${JSON.stringify(cachedBaileysVersion)}) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now()`;
+    } catch {}
+    return cachedBaileysVersion;
+  } catch (e) {
+    if (cachedBaileysVersion) {
+      void logEvent('baileys', 'fetchVersion', 'warn', {}, String(e));
+      return cachedBaileysVersion;
+    }
+    try {
+      const rows = await sql<
+        { value: string }[]
+      >`SELECT value FROM auth_state WHERE key = 'baileys-version' LIMIT 1`;
+      if (rows[0]?.value) {
+        const v = JSON.parse(rows[0].value);
+        if (Array.isArray(v) && v.length === 3) {
+          cachedBaileysVersion = v as [number, number, number];
+          return cachedBaileysVersion;
+        }
+      }
+    } catch {}
+    void logEvent(
+      'baileys',
+      'fetchVersion',
+      'warn',
+      {},
+      `fallback to hardcoded: ${String(e)}`,
+    );
+    return [2, 3000, 1043857760] as [number, number, number];
+  }
+}
+
 interface WhatsAppSessionEvents {
   qr: [string];
   'pairing-code': [string];
@@ -53,26 +97,55 @@ const SESSION_ID = 'wagss';
 
 export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
   private static sseClients = new Set<() => void>();
-  private static sseListeners = new Set<(data: string) => void>();
+  private static sseListeners = new Set<(id: number, data: string) => void>();
+  private static sseIdCounter = 0;
+  private static sseBuffer: Array<{ id: number; data: string }> = [];
+
+  private static sseLogger = P({ level: 'warn' }).child({
+    module: 'sse',
+  });
 
   /** Broadcast an event to all connected /sse/live clients. */
   static emitToSse(data: string): void {
+    const id = ++WhatsAppSession.sseIdCounter;
+    WhatsAppSession.sseBuffer.push({ id, data });
+    if (WhatsAppSession.sseBuffer.length > 100)
+      WhatsAppSession.sseBuffer.shift();
     for (const cb of WhatsAppSession.sseListeners) {
       try {
-        cb(data);
-      } catch {}
+        cb(id, data);
+      } catch (e) {
+        WhatsAppSession.sseLogger.warn(
+          { err: e, dataPreview: data.slice(0, 200) },
+          'SSE callback error',
+        );
+        void logEvent(
+          'sse',
+          'emit_error',
+          'warn',
+          { dataPreview: data.slice(0, 200) },
+          String(e),
+        );
+      }
     }
   }
 
-  static subscribeSse(callback: (data: string) => void): () => void {
-    WhatsAppSession.sseListeners.add(callback);
-    return () => WhatsAppSession.sseListeners.delete(callback);
+  static getBufferedEvents(
+    sinceId: number,
+  ): Array<{ id: number; data: string }> {
+    return WhatsAppSession.sseBuffer.filter((e) => e.id > sinceId);
+  }
+
+  static subscribeSse(
+    callback: (id: number, data: string) => void,
+  ): () => void {
+    WhatsAppSession.sseListeners.add(callback as never);
+    return () => WhatsAppSession.sseListeners.delete(callback as never);
   }
 
   public phoneNumber: string | null;
 
   private logger: P.Logger;
-  private DEFAULT_TIMEOUT = 0;
 
   private socket: WASocket | null = null;
   private isLoggedIn: boolean = false;
@@ -83,15 +156,19 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
   private heartbeatInterval: NodeJS.Timeout | undefined = undefined;
 
   private messageQueue = new PQueue({ concurrency: 1 });
+  private mediaQueue = new PQueue({ concurrency: 3 });
   private readonly MAX_RETRIES = 3;
   private readonly RETRY_DELAY = 5_000;
 
   private _connectionState: WAConnectionState = 'close';
   private _isNewSession: boolean = false;
+  private connectMutex: Promise<WASocket> | null = null;
+  private reconnectAttempts = 0;
 
   /** FIFO of user-attribution pending for outgoing messages. */
   private pendingSend: Array<{
     jid: string;
+    msgId: string | null;
     sentBy: string;
     senderName: string;
   }> = [];
@@ -141,8 +218,23 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
     };
   }
 
+  private getBackoffDelay(): number {
+    const base = Math.min(
+      1000 * 2 ** this.reconnectAttempts,
+      MAX_RECONNECT_DELAY_MS,
+    );
+    this.reconnectAttempts++;
+    return base + randomInt(0, 1000);
+  }
+
   async connect(phoneNumber: string | null = null): Promise<WASocket> {
-    if (this.socket) {
+    if (this.connectMutex) return this.connectMutex;
+    if (
+      this.socket &&
+      !this.connectMutex &&
+      (this._connectionState === 'open' ||
+        this._connectionState === 'connecting')
+    ) {
       this.logger.info('Socket already connected. Reusing existing connection');
       return this.socket;
     }
@@ -151,11 +243,11 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
       this.phoneNumber = validatePhoneNumber(phoneNumber) ?? null;
     }
 
-    return new Promise<WASocket>(async (resolve, reject) => {
+    const promise = new Promise<WASocket>(async (resolve, reject) => {
       try {
         const { state, saveCreds, clearCreds } =
           await initPostgresAuthState(sql);
-        const { version } = await fetchLatestBaileysVersion();
+        const version = await getBaileysVersion();
 
         const sock = makeWASocket({
           version: version,
@@ -164,7 +256,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, this.logger),
           },
-          browser: ['Windows', 'Edge', '120.0.0'],
+          browser: ['Windows', 'Edge', '128.0.0'],
           generateHighQualityLinkPreview: true,
           markOnlineOnConnect: true,
           syncFullHistory: true,
@@ -177,9 +269,11 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
             if (!key?.id || !key?.remoteJid) return undefined;
             const { getMessage } = await import('./message-store');
             const row = await getMessage(`${key.remoteJid}-${key.id}`);
-            const full = row?.message as
-              { message?: proto.IMessage } | undefined;
-            if (full?.message) return full.message;
+            const full = row?.message as unknown as
+              proto.IWebMessageInfo | undefined;
+            // Return inner IMessage for Baileys decrypt (messageSecret inside messageContextInfo)
+            if (full?.message) return full.message as unknown as proto.IMessage;
+            if (full) return full as unknown as proto.IMessage;
             return undefined;
           },
         });
@@ -193,6 +287,134 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           for (const msg of upsert.messages) {
             if (!msg.key?.id || !msg.key?.remoteJid) continue;
 
+            // Skip system messages that should not be stored as chat bubbles
+            const _innerType = Object.keys(msg.message ?? {})[0];
+
+            // Handle MESSAGE_EDIT from secretEncryptedMessage (E2EE, Baileys tidak auto-decrypt)
+            const secEnc = (msg.message as any)?.secretEncryptedMessage;
+            if (
+              secEnc?.secretEncType === 2 ||
+              secEnc?.secretEncType === 'MESSAGE_EDIT' ||
+              secEnc?.targetMessageKey
+            ) {
+              const targetKey = secEnc.targetMessageKey;
+              if (targetKey?.id && targetKey?.remoteJid) {
+                const targetStoreId = `${targetKey.remoteJid}-${targetKey.id}`;
+                try {
+                  const { getMessage } = await import('./message-store');
+                  const existing = await getMessage(targetStoreId);
+                  const originalText = existing?.message_text || '';
+                  let newEditedText = originalText;
+                  let editedMsgForDb: any = null;
+                  try {
+                    const { decryptEditedMessage } =
+                      await import('./decrypt-edit');
+                    const rawMsg = existing?.message as any;
+                    const secret =
+                      rawMsg?.message?.messageContextInfo?.messageSecret ??
+                      rawMsg?.messageContextInfo?.messageSecret ??
+                      (rawMsg as any)?.messageSecret;
+                    if (secret) {
+                      const sender =
+                        msg.key.participant ||
+                        (msg as any).participant ||
+                        msg.key.remoteJid;
+                      const decrypted = decryptEditedMessage(
+                        secEnc as never,
+                        secret as never,
+                        sender,
+                      );
+                      const editedInner = (decrypted as any)?.protocolMessage
+                        ?.editedMessage;
+                      if (editedInner) {
+                        newEditedText =
+                          extractText({ message: editedInner } as never) ||
+                          originalText;
+                        editedMsgForDb = {
+                          key: {
+                            ...existing?.message?.key,
+                            id: targetKey.id,
+                            remoteJid: targetKey.remoteJid,
+                          },
+                          message: editedInner,
+                          messageTimestamp: msg.messageTimestamp,
+                        };
+                      }
+                    }
+                  } catch {}
+                  {
+                    const _phone = (
+                      msg.key.participantAlt ||
+                      (msg as any).participant ||
+                      msg.key.participant ||
+                      targetKey.remoteJid ||
+                      ''
+                    )
+                      .split('@')[0]
+                      .split(':')[0];
+                    const _jam = new Date().toLocaleTimeString('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    });
+                    // eslint-disable-next-line no-console
+                    console.log(
+                      `Pesan Edit : ${_phone} : ${originalText} : ${newEditedText} - ${_jam}`,
+                    );
+                  }
+                  if (editedMsgForDb) {
+                    await updateMessageEdited(
+                      targetKey.remoteJid,
+                      targetKey.id,
+                      editedMsgForDb,
+                    );
+                  } else {
+                    const { sql } = await import('@/db/client');
+                    await sql`
+                      UPDATE messages SET
+                        original_text = COALESCE(original_text, message_text),
+                        original_message = COALESCE(original_message, message),
+                        edited_at = COALESCE(edited_at, ${Date.now()})
+                      WHERE id = ${targetStoreId}
+                    `;
+                  }
+                  WhatsAppSession.emitToSse(
+                    JSON.stringify({
+                      type: 'message_edited',
+                      data: {
+                        chatJid: targetKey.remoteJid,
+                        messageId: targetKey.id,
+                        text: newEditedText,
+                        originalText,
+                      },
+                    }),
+                  );
+                } catch (e) {
+                  console.log('[EDIT E2EE] failed', e);
+                }
+              }
+              continue;
+            }
+
+            if (
+              _innerType === 'secretEncryptedMessage' ||
+              _innerType === 'senderKeyDistributionMessage'
+            ) {
+              void logEvent(
+                'baileys',
+                'decrypt',
+                'warn',
+                {
+                  chatJid: msg.key.remoteJid,
+                  participant: msg.key.participant,
+                  id: msg.key.id,
+                  type: _innerType,
+                },
+                'skipped system message',
+              );
+              continue;
+            }
+
             // protocolMessage: edit / delete-for-everyone
             const pm = msg.message?.protocolMessage;
             if (pm) {
@@ -201,20 +423,66 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
               if (targetJid && targetId) {
                 if (pm.type === 0) {
                   // REVOKE -> delete for everyone
-                  await markMessageDeleted(targetJid, targetId).catch(() => {});
-                  WhatsAppSession.emitToSse(
-                    JSON.stringify({
-                      type: 'message_deleted',
-                      data: { chatJid: targetJid, messageId: targetId },
-                    }),
-                  );
+                  let _hapusOrig = '';
+                  try {
+                    const { getMessage: _gm } = await import('./message-store');
+                    const _ex = await _gm(`${targetJid}-${targetId}`);
+                    _hapusOrig = _ex?.message_text || '';
+                  } catch {}
+                  try {
+                    await markMessageDeleted(targetJid, targetId);
+                    WhatsAppSession.emitToSse(
+                      JSON.stringify({
+                        type: 'message_deleted',
+                        data: { chatJid: targetJid, messageId: targetId },
+                      }),
+                    );
+                  } catch {}
+                  {
+                    const _phone = (
+                      msg.key.participantAlt ||
+                      (msg as any).participant ||
+                      targetJid ||
+                      ''
+                    )
+                      .split('@')[0]
+                      .split(':')[0];
+                    const _jam = new Date().toLocaleTimeString('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    });
+                    // eslint-disable-next-line no-console
+                    console.log(
+                      `Pesan Hapus : ${_phone} : ${_hapusOrig} : di hapus - ${_jam}`,
+                    );
+                  }
                 } else if (pm.type === 14 && pm.editedMessage) {
                   // MESSAGE_EDIT -> update stored message
+                  let editedMsg = pm.editedMessage as any;
+                  if (editedMsg?.ephemeralMessage?.message)
+                    editedMsg = editedMsg.ephemeralMessage.message;
+                  if (editedMsg?.viewOnceMessage?.message)
+                    editedMsg = editedMsg.viewOnceMessage.message;
+                  if (editedMsg?.viewOnceMessageV2?.message)
+                    editedMsg = editedMsg.viewOnceMessageV2.message;
+                  const newEditedText =
+                    extractText(
+                      editedMsg?.message ? editedMsg : { message: editedMsg },
+                    ) || '';
                   const edited = {
                     ...msg,
                     key: { ...msg.key, id: targetId, remoteJid: targetJid },
-                    message: pm.editedMessage,
+                    message: editedMsg,
                   };
+                  let originalText = '';
+                  try {
+                    const { getMessage } = await import('./message-store');
+                    const existing = await getMessage(
+                      `${targetJid}-${targetId}`,
+                    );
+                    if (existing) originalText = existing.message_text || '';
+                  } catch {}
                   await updateMessageEdited(targetJid, targetId, edited).catch(
                     () => {},
                   );
@@ -224,10 +492,31 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                       data: {
                         chatJid: targetJid,
                         messageId: targetId,
-                        text: extractText(edited),
+                        text: newEditedText,
+                        originalText: originalText || '',
                       },
                     }),
                   );
+                  {
+                    const _phone = (
+                      msg.key.participantAlt ||
+                      (msg as any).participant ||
+                      msg.key.participant ||
+                      targetJid ||
+                      ''
+                    )
+                      .split('@')[0]
+                      .split(':')[0];
+                    const _jam = new Date().toLocaleTimeString('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    });
+                    // eslint-disable-next-line no-console
+                    console.log(
+                      `Pesan Edit : ${_phone} : ${originalText} : ${newEditedText} - ${_jam}`,
+                    );
+                  }
                 }
               }
               continue;
@@ -237,9 +526,20 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
             let senderName: string | null = null;
 
             if (msg.key.fromMe) {
-              const idx = this.pendingSend.findIndex(
-                (p) => p.jid === msg.key.remoteJid,
+              // Prefer exact msgId match (Fix 4); fallback to jid-only for legacy pending entries.
+              let idx = this.pendingSend.findIndex(
+                (p) => p.jid === msg.key.remoteJid && p.msgId === msg.key.id,
               );
+              if (idx < 0) {
+                idx = this.pendingSend.findIndex(
+                  (p) => p.jid === msg.key.remoteJid && p.msgId === null,
+                );
+              }
+              if (idx < 0) {
+                idx = this.pendingSend.findIndex(
+                  (p) => p.jid === msg.key.remoteJid,
+                );
+              }
               if (idx >= 0) {
                 const pending = this.pendingSend.splice(idx, 1)[0];
                 if (pending) {
@@ -247,20 +547,90 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                   senderName = pending.senderName;
                 }
               }
-              await upsertMessage(msg, {
-                sentByUser,
-                senderName,
-              });
+              try {
+                await upsertMessage(msg, {
+                  sentByUser,
+                  senderName,
+                });
+              } catch (e) {
+                void logEvent(
+                  'baileys',
+                  'decrypt',
+                  'error',
+                  {
+                    chatJid: msg.key.remoteJid,
+                    participant: msg.key.participant,
+                    id: msg.key.id,
+                  },
+                  String(e),
+                );
+              }
             } else {
-              senderName = await this.getContactName(msg.key.remoteJid);
-              await upsertMessage(msg, { senderName });
+              const targetJid = msg.key.participant || msg.key.remoteJid;
+              senderName = targetJid
+                ? await this.getContactName(targetJid)
+                : null;
+              try {
+                await upsertMessage(msg, { senderName });
+              } catch (e) {
+                void logEvent(
+                  'baileys',
+                  'decrypt',
+                  'error',
+                  {
+                    chatJid: msg.key.remoteJid,
+                    participant: msg.key.participant,
+                    id: msg.key.id,
+                  },
+                  String(e),
+                );
+              }
             }
 
-            // Auto-download stickers (small, always wanted). Other media is
-            // downloaded on demand via GET /media?download=1.
-            const mtype = Object.keys(msg.message ?? {})[0];
-            if (mtype === 'stickerMessage' && this.socket) {
-              downloadMedia(msg, this.socket as never).catch(() => {});
+            // Simple log: Pesan Baru
+            {
+              const _phone = (
+                msg.key.participantAlt ||
+                msg.key.participant ||
+                msg.key.remoteJid ||
+                ''
+              )
+                .split('@')[0]
+                .split(':')[0];
+              const _text =
+                extractText(msg as never) ||
+                Object.keys(msg.message ?? {})[0] ||
+                '';
+              const _jam = new Date().toLocaleTimeString('id-ID', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              });
+              // eslint-disable-next-line no-console
+              console.log(`Pesan Baru ${_phone} : ${_text} - ${_jam}`);
+            }
+
+            // Auto-download media honoring AUTO_DOWNLOAD_ALL / STICKER flags (without size limit)
+            if (this.socket) {
+              const mtype = Object.keys(msg.message ?? {})[0] ?? 'unknown';
+              const shouldDownload =
+                AUTO_DOWNLOAD_ALL ||
+                (mtype === 'stickerMessage' && AUTO_DOWNLOAD_STICKER);
+              if (shouldDownload) {
+                this.mediaQueue
+                  .add(() =>
+                    downloadMedia(msg, this.socket as never).catch((e) => {
+                      void logEvent(
+                        'media',
+                        'autoDownload',
+                        'warn',
+                        { mtype, id: msg.key?.id },
+                        String(e),
+                      );
+                    }),
+                  )
+                  .catch(() => {});
+              }
             }
 
             WhatsAppSession.emitToSse(
@@ -349,9 +719,29 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           }
         });
 
-        sock.ev.on('messages.update', (updates) => {
+        sock.ev.on('messages.update', async (updates) => {
           for (const u of updates) {
-            const status = u.update.status;
+            // Phase1: log-only check for editedMessage / protocolMessage
+            const protoMsg = (u.update as any)?.message?.protocolMessage;
+            const editedDirect = (u.update as any)?.message?.editedMessage;
+            const anyMsg = (u.update as any)?.message;
+            if (protoMsg || editedDirect || anyMsg) {
+              console.log('--- update.message deteksi ---');
+              console.dir(anyMsg, { depth: null, colors: true });
+              console.log('key:', u.key);
+              if (protoMsg?.type === 14 || protoMsg?.type === 'MESSAGE_EDIT') {
+                console.log(
+                  'type 14 MESSAGE_EDIT, target:',
+                  protoMsg.key,
+                  'editedMessage:',
+                  protoMsg.editedMessage,
+                );
+              }
+            }
+            // TODO Phase2: if protoMsg?.type===14 -> extractText({message: editedMessage}) + DB + SSE
+
+            // Handle status updates
+            const status = (u as any).update?.status;
             if (status && u.key?.remoteJid) {
               // WebMessageInfo.Status: 2 SERVER_ACK(sent), 3 DELIVERY_ACK, 4 READ, 5 PLAYED
               const label =
@@ -442,40 +832,94 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           for (const g of updates) {
             if (!g.id) continue;
             saveGroupFromSocket(g.id);
+            WhatsAppSession.emitToSse(
+              JSON.stringify({ type: 'group', data: { id: g.id } }),
+            );
           }
         });
 
         sock.ev.on('group-participants.update', (update) => {
           if (!update.id) return;
           saveGroupFromSocket(update.id);
+          WhatsAppSession.emitToSse(
+            JSON.stringify({ type: 'group', data: { id: update.id } }),
+          );
         });
 
-        sock.ev.on('messaging-history.set', ({ messages, contacts, chats }) => {
-          Promise.all([
-            messages
-              .filter((m) => m.key?.remoteJid && m.key?.id)
-              .map(async (m) => upsertMessage(m)),
-            contacts.map((c) =>
-              upsertContact(
-                c as {
-                  id: string;
-                  name?: string;
-                  notify?: string;
-                  imgUrl?: string;
-                  status?: string;
-                  lid?: string;
-                },
-              ),
-            ),
-          ])
-            .catch(() => {})
-            .finally(() => {
-              WhatsAppSession.emitToSse(
-                JSON.stringify({ type: 'history_done', data: null }),
+        sock.ev.on(
+          'messaging-history.set',
+          async ({ messages, contacts, chats, lidPnMappings }) => {
+            try {
+              const validMessages = messages.filter(
+                (m) => m.key?.remoteJid && m.key?.id,
               );
-            });
-          void chats;
-        });
+              // Chunked upserts to avoid DB pool saturation (7000 concurrent -> OOM)
+              const chunk = async <T>(
+                items: (() => Promise<T>)[],
+                size: number,
+              ) => {
+                for (let i = 0; i < items.length; i += size) {
+                  await Promise.all(
+                    items.slice(i, i + size).map((fn) => fn().catch(() => {})),
+                  );
+                }
+              };
+              const msgTasks = validMessages.map((m) => () => upsertMessage(m));
+              const contactTasks = contacts.map(
+                (c) => () =>
+                  upsertContact(
+                    c as {
+                      id: string;
+                      name?: string;
+                      notify?: string;
+                      imgUrl?: string;
+                      status?: string;
+                      lid?: string;
+                    },
+                  ),
+              );
+              await chunk(msgTasks, 100);
+              await chunk(contactTasks, 100);
+              await saveLidMappings(lidPnMappings ?? []).catch(() => {});
+              // Auto-download media from history honoring flags, concurrency 3
+              if (sock && (AUTO_DOWNLOAD_ALL || AUTO_DOWNLOAD_STICKER)) {
+                const mediaMessages = validMessages.filter((m) => {
+                  const t = Object.keys(m.message ?? {})[0] ?? '';
+                  if (AUTO_DOWNLOAD_ALL) {
+                    return [
+                      'imageMessage',
+                      'videoMessage',
+                      'audioMessage',
+                      'documentMessage',
+                      'stickerMessage',
+                      'viewOnceMessage',
+                      'viewOnceMessageV2',
+                    ].includes(t);
+                  }
+                  return t === 'stickerMessage';
+                });
+                for (let i = 0; i < mediaMessages.length; i += 3) {
+                  await Promise.all(
+                    mediaMessages
+                      .slice(i, i + 3)
+                      .map((m) =>
+                        this.mediaQueue
+                          .add(() =>
+                            downloadMedia(m, sock as never).catch(() => {}),
+                          )
+                          .catch(() => {}),
+                      ),
+                  );
+                  if (i + 3 < mediaMessages.length) await Bun.sleep(100);
+                }
+              }
+            } catch {}
+            WhatsAppSession.emitToSse(
+              JSON.stringify({ type: 'history_done', data: null }),
+            );
+            void chats;
+          },
+        );
 
         sock.ev.on('connection.update', async (update) => {
           const { connection, lastDisconnect, qr } = update;
@@ -500,17 +944,27 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
             }
 
             if (!sock.authState.creds.registered && this.phoneNumber) {
-              try {
-                const code = await sock.requestPairingCode(this.phoneNumber);
-                this.logger.info({ code }, 'Pairing code generated');
-                this.pairingCode = code;
-                this.emit('pairing-code', code);
-              } catch (error) {
-                this.logger.error({ error }, 'Failed to request pairing code');
-                this.emit(
-                  'error',
-                  error instanceof Error ? error : new Error(String(error)),
-                );
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  const code = await sock.requestPairingCode(this.phoneNumber);
+                  this.logger.info({ code }, 'Pairing code generated');
+                  this.pairingCode = code;
+                  this.emit('pairing-code', code);
+                  break;
+                } catch (error) {
+                  if (attempt === 3) {
+                    this.logger.error(
+                      { error },
+                      'Failed to request pairing code',
+                    );
+                    this.emit(
+                      'error',
+                      error instanceof Error ? error : new Error(String(error)),
+                    );
+                  } else {
+                    await Bun.sleep(5000);
+                  }
+                }
               }
             }
             this.broadcastState();
@@ -519,6 +973,14 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           if (connection === 'close') {
             const statusCode = (lastDisconnect?.error as Boom)?.output
               ?.statusCode;
+            void logEvent(
+              'baileys',
+              'connection.update',
+              'warn',
+              { connection, statusCode, hasQr: !!qr },
+              (lastDisconnect?.error as Error)?.message ??
+                String(lastDisconnect?.error ?? ''),
+            );
             this.emit('connection-close', statusCode);
 
             switch (statusCode) {
@@ -538,7 +1000,10 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                   clearCreds();
                 }
                 this.cleanup();
-                this.connect().catch((err) => this.emit('error', err));
+                setTimeout(
+                  () => this.connect().catch((err) => this.emit('error', err)),
+                  this.getBackoffDelay(),
+                );
                 break;
 
               case DisconnectReason.forbidden:
@@ -576,19 +1041,15 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                 this.cleanup();
                 this._isNewSession = true;
                 clearTimeout(this.timeout);
-                this.connect().catch((err) => this.emit('error', err));
+                setTimeout(
+                  () => this.connect().catch((err) => this.emit('error', err)),
+                  this.getBackoffDelay(),
+                );
                 break;
 
               case 998:
                 this.cleanup(true);
                 this.emit('session-stopped', 'disconnectedByUser');
-                break;
-
-              case 999:
-                if (this.pairingCode && !this.isLoggedIn) {
-                  clearCreds();
-                }
-                this.cleanup(true);
                 break;
 
               // QR link timeout / permanent manual stop: do NOT reconnect
@@ -601,12 +1062,22 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
                 break;
 
               default:
-                if (statusCode === 500) {
-                  this.cleanup();
-                  this.connect().catch((err) => this.emit('error', err));
-                }
+                // Unknown / transient close codes: reconnect with backoff (was 500-only)
+                this.cleanup();
+                setTimeout(
+                  () => this.connect().catch((err) => this.emit('error', err)),
+                  this.getBackoffDelay(),
+                );
             }
           } else if (connection === 'open') {
+            void logEvent(
+              'baileys',
+              'connection.update',
+              'info',
+              { connection: 'open', isLoggedIn: true },
+              { user: (sock as any).user?.id ?? null },
+            );
+            this.reconnectAttempts = 0;
             clearTimeout(this.timeout);
             this.timeout = undefined;
             clearTimeout(this.qrTimeout);
@@ -641,34 +1112,26 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
             this.broadcastState();
           }
         });
-
-        if (this.DEFAULT_TIMEOUT > 0) {
-          this.timeout = setTimeout(
-            () => {
-              if (this.socket) {
-                this.socket.end(
-                  new Boom('Process timeout reached', { statusCode: 999 }),
-                );
-                this.socket = null;
-              }
-              this.isLoggedIn = false;
-            },
-            1000 * 60 * this.DEFAULT_TIMEOUT,
-          );
-        }
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.emit('error', err);
         reject(err);
       }
     });
+    this.connectMutex = promise;
+    promise
+      .finally(() => {
+        this.connectMutex = null;
+      })
+      .catch(() => {});
+    return promise;
   }
 
   private async getContactName(jid: string): Promise<string | null> {
     const rows = await sql<{ name: string | null }[]>`
       SELECT name FROM contacts WHERE jid = ${jid} LIMIT 1
     `;
-    return rows[0]?.name ?? null;
+    return rows[0]?.name ?? jid.split('@')[0] ?? null;
   }
 
   private broadcastState(): void {
@@ -711,7 +1174,7 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
     await this.disconnect();
   }
 
-  private cleanup(fullCleanup: boolean = false): void {
+  private cleanup(_fullCleanup: boolean = false): void {
     this.socket = null;
     this.isLoggedIn = false;
     this.qrCode = null;
@@ -719,11 +1182,13 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
     clearTimeout(this.qrTimeout);
     this.qrTimeout = undefined;
     this.messageQueue.clear();
+    this.mediaQueue.clear();
+    this.pendingSend = [];
+    this.connectMutex = null;
     this._connectionState = 'close';
     clearInterval(this.heartbeatInterval);
     this.heartbeatInterval = undefined;
     this._isNewSession = false;
-    void fullCleanup;
   }
 
   /**
@@ -736,18 +1201,25 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
     content: AnyMessageContent,
     options: MiscMessageGenerationOptions | undefined = undefined,
     sendPresence: boolean = false,
-    delay: number = 60,
     attribution?: { sentBy: string; senderName: string },
   ): Promise<void> {
+    let pending: {
+      jid: string;
+      msgId: string | null;
+      sentBy: string;
+      senderName: string;
+    } | null = null;
     if (attribution) {
-      this.pendingSend.push({
+      pending = {
         jid,
+        msgId: null,
         sentBy: attribution.sentBy,
         senderName: attribution.senderName,
-      });
+      };
+      this.pendingSend.push(pending);
     }
 
-    const send = async () => {
+    const send = async (): Promise<unknown> => {
       if (!this.socket) {
         throw new Error('WhatsApp not connected');
       }
@@ -769,16 +1241,32 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           .sendPresenceUpdate('paused', jid)
           .catch((r) => this.logger.error({ error: r }, 'paused error'));
         await Bun.sleep(randomInt(10, 15) * 100);
-      } else {
-        const jitter = (base: number) =>
-          Math.max(0, Math.round(base * 1000 + (Math.random() - 0.5) * 30000));
-        await Bun.sleep(jitter(delay));
       }
 
-      await this.socket.sendMessage(jid, content, options ?? undefined);
-      await Bun.sleep(
-        Math.max(0, Math.round(delay * 1000 + (Math.random() - 0.5) * 30000)),
+      const result = await this.socket.sendMessage(
+        jid,
+        content,
+        options ?? undefined,
       );
+      // Log raw Baileys return for future reference (requested by user).
+      void logSend(jid, result, attribution ?? null);
+      void logEvent(
+        'baileys',
+        'sendMessage',
+        'info',
+        {
+          jid,
+          attribution,
+          isLoggedIn: this.isLoggedIn,
+          connectionState: this._connectionState,
+        },
+        result,
+      );
+      // Patch pending entry with the actual key.id so the echo can be matched exactly.
+      if (pending && result?.key?.id) {
+        pending.msgId = String(result.key.id);
+      }
+      return result;
     };
 
     const sendWithRetry = async () => {
@@ -789,16 +1277,38 @@ export class WhatsAppSession extends EventEmitter<WhatsAppSessionEvents> {
           return;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
+          void logEvent(
+            'baileys',
+            'sendMessage',
+            'error',
+            {
+              jid,
+              attempt,
+              attribution,
+              isLoggedIn: this.isLoggedIn,
+              connectionState: this._connectionState,
+            },
+            String(lastError),
+          );
           if (attempt < this.MAX_RETRIES) {
             await Bun.sleep(this.RETRY_DELAY);
           }
         }
+      }
+      // Exhausted retries: remove pending attribution so it does not leak to a later message.
+      if (pending) {
+        const idx = this.pendingSend.indexOf(pending);
+        if (idx >= 0) this.pendingSend.splice(idx, 1);
       }
       throw lastError;
     };
 
     const MAX_QUEUED = Number(Bun.env.SEND_QUEUE_MAX ?? 500);
     if (this.messageQueue.size >= MAX_QUEUED) {
+      if (pending) {
+        const idx = this.pendingSend.indexOf(pending);
+        if (idx >= 0) this.pendingSend.splice(idx, 1);
+      }
       throw new Error(`Send queue full (${MAX_QUEUED}), try again later`);
     }
 
